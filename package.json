@@ -1,6 +1,6 @@
 {
   "name": "@contextify/cli",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
   "description": "Contextify telemetry CLI — shadows terminal sessions, ships logs to the webhook",
   "type": "module",
@@ -8,6 +8,32 @@
   "bin": {
     "contextify": "./dist/index.js"
   },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./hooks": {
+      "types": "./dist/commands/hooks.d.ts",
+      "import": "./dist/commands/hooks.js"
+    },
+    "./transcript": {
+      "types": "./dist/transcript.d.ts",
+      "import": "./dist/transcript.js"
+    },
+    "./identity": {
+      "types": "./dist/identity.d.ts",
+      "import": "./dist/identity.js"
+    },
+    "./install-hooks": {
+      "types": "./dist/commands/install-hooks.d.ts",
+      "import": "./dist/commands/install-hooks.js"
+    }
+  },
+  "files": [
+    "dist",
+    "src/hooks"
+  ],
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node ./dist/index.js",

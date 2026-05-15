@@ -19,6 +19,11 @@ export interface Batch {
   readonly projectName?: string;
   readonly sessionId: string;
   readonly payload: string;
+  /**
+   * Origin discriminator. Omitted by the legacy wrap path; the API
+   * defaults missing values to 'terminal' so old callers keep working.
+   */
+  readonly source?: 'terminal' | 'claude-code';
 }
 
 export interface ShipOptions {
