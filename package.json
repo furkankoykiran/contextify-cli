@@ -28,6 +28,10 @@
     "./install-hooks": {
       "types": "./dist/commands/install-hooks.d.ts",
       "import": "./dist/commands/install-hooks.js"
+    },
+    "./prompt": {
+      "types": "./dist/commands/prompt.d.ts",
+      "import": "./dist/commands/prompt.js"
     }
   },
   "files": [
