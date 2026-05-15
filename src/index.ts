@@ -1,31 +1,112 @@
 #!/usr/bin/env node
 /**
- * @gbrain/cli entrypoint.
+ * gbrain — telemetry CLI.
  *
- * PR #1: prints help only. PR #6 introduces `gbrain init`, `gbrain wrap`, and
- * the PTY capture path that ships telemetry to the webhook.
+ * Commands:
+ *   gbrain init <projectId> [--name <name>] [--server <url>] [--force]
+ *   gbrain wrap -- <cmd> [args...]
+ *   gbrain ship --once
+ *   gbrain --version
+ *   gbrain --help
  */
+import { runInit } from './commands/init.js';
+import { runShip } from './commands/ship.js';
+import { runWrap } from './commands/wrap.js';
 
-const HELP_TEXT = `gbrain — telemetry CLI (PR #1 stub)
+export const VERSION = '0.1.0';
+
+const HELP_TEXT = `gbrain — telemetry CLI (v${VERSION})
 
 Usage:
-  gbrain --help      Show this message
-  gbrain --version   Print version
+  gbrain init <projectId> [--name <name>] [--server <url>] [--force]
+      Write .gbrain.json in the current directory.
 
-Commands (coming in PR #6):
-  gbrain init <project>   Bind cwd to a project
-  gbrain wrap -- <cmd>    Spawn cmd in a PTY and ship telemetry
+  gbrain wrap -- <cmd> [args...]
+      Spawn the command, mirror its output to your terminal, and ship the
+      capture to the gBrain server in batches.
+
+  gbrain ship --once
+      Flush any locally-spooled batches (left over from offline runs).
+
+  gbrain --version
+  gbrain --help
+
+Environment:
+  GBRAIN_SERVER_URL   override server URL
+  GBRAIN_PROJECT_ID   override project id
 `;
 
-export function main(argv: readonly string[]): number {
+export interface CliEntry {
+  readonly argv: readonly string[];
+  readonly cwd?: string;
+  readonly env?: NodeJS.ProcessEnv;
+}
+
+export async function main(entry: CliEntry): Promise<number> {
+  const argv = [...entry.argv];
+  const cwd = entry.cwd ?? process.cwd();
+  const env = entry.env ?? process.env;
+
   if (argv.includes('--version') || argv.includes('-v')) {
-    process.stdout.write('0.1.0\n');
+    process.stdout.write(`${VERSION}\n`);
     return 0;
   }
-  process.stdout.write(HELP_TEXT);
-  return 0;
+  if (argv.length === 0 || argv.includes('--help') || argv.includes('-h')) {
+    process.stdout.write(HELP_TEXT);
+    return 0;
+  }
+
+  const command = argv.shift();
+  switch (command) {
+    case 'init':
+      return runInit(parseInitArgs(argv), cwd);
+    case 'wrap':
+      return runWrap({ argv: extractWrapArgv(argv), cwd, env });
+    case 'ship':
+      return runShip({ cwd, env });
+    default:
+      process.stderr.write(`gbrain: unknown command '${command}'\n${HELP_TEXT}`);
+      return 2;
+  }
+}
+
+function parseInitArgs(argv: readonly string[]): {
+  projectId: string;
+  projectName?: string;
+  serverUrl?: string;
+  force?: boolean;
+} {
+  let projectId = '';
+  let projectName: string | undefined;
+  let serverUrl: string | undefined;
+  let force = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === '--name') {
+      projectName = argv[++i];
+    } else if (arg === '--server') {
+      serverUrl = argv[++i];
+    } else if (arg === '--force') {
+      force = true;
+    } else if (!arg.startsWith('-') && !projectId) {
+      projectId = arg;
+    }
+  }
+  return { projectId, projectName, serverUrl, force };
+}
+
+/** Extract everything after `--` (or default to the whole argv if no `--`). */
+function extractWrapArgv(argv: readonly string[]): string[] {
+  const idx = argv.indexOf('--');
+  if (idx === -1) return [...argv];
+  return argv.slice(idx + 1);
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
-  process.exit(main(process.argv.slice(2)));
+  main({ argv: process.argv.slice(2) })
+    .then((code) => process.exit(code))
+    .catch((err) => {
+      process.stderr.write(`${(err as Error).stack ?? err}\n`);
+      process.exit(1);
+    });
 }
