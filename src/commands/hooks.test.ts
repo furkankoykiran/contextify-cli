@@ -68,7 +68,8 @@ describe('contextify hooks <event>', () => {
     };
     writeFileSync(join(sessions, `${sessionId}.json`), JSON.stringify(state));
 
-    // Create a synthetic transcript.
+    // Create a synthetic transcript with mixed text + tool_use blocks so we
+    // can also assert that actions are extracted and shipped.
     const transcriptPath = join(stateRoot, 'transcript.jsonl');
     writeFileSync(
       transcriptPath,
@@ -83,7 +84,11 @@ describe('contextify hooks <event>', () => {
           uuid: 'A1',
           message: {
             role: 'assistant',
-            content: [{ type: 'text', text: 'Acknowledged — postgres-js it is.' }],
+            content: [
+              { type: 'tool_use', name: 'Bash', input: { command: 'pnpm add postgres' } },
+              { type: 'tool_use', name: 'Edit', input: { file_path: '/repo/db.ts' } },
+              { type: 'text', text: 'Acknowledged — postgres-js it is.' },
+            ],
           },
           timestamp: 't2',
           cwd,
@@ -115,6 +120,11 @@ describe('contextify hooks <event>', () => {
     expect(turnEnvelope.turn.userText).toBe('always use postgres-js');
     expect(turnEnvelope.turn.assistantText).toBe('Acknowledged — postgres-js it is.');
     expect(turnEnvelope.turn.transcriptUuid).toBe('A1');
+    // Actions executed during the turn are bundled in.
+    expect(turnEnvelope.turn.actions).toEqual([
+      { kind: 'bash', detail: 'pnpm add postgres' },
+      { kind: 'edit', detail: '/repo/db.ts' },
+    ]);
 
     // lastShippedUuid should be recorded for dedup.
     const stateAfter = JSON.parse(
