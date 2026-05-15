@@ -1,16 +1,16 @@
 /**
  * Project-local CLI configuration.
  *
- * `.gbrain.json` lives in the user's cwd (the project root) and stores the
+ * `.contextify.json` lives in the user's cwd (the project root) and stores the
  * `projectId`, optional display name, and server URL. Environment variables
- * (`GBRAIN_SERVER_URL`, `GBRAIN_PROJECT_ID`) override the file so CI can
+ * (`CONTEXTIFY_SERVER_URL`, `CONTEXTIFY_PROJECT_ID`) override the file so CI can
  * inject credentials without rewriting the file on disk.
  */
 import { readFile, writeFile } from 'node:fs/promises';
 import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
-export const CONFIG_FILENAME = '.gbrain.json';
+export const CONFIG_FILENAME = '.contextify.json';
 export const DEFAULT_SERVER_URL = 'http://localhost:3000';
 
 export interface CliConfig {
@@ -63,12 +63,12 @@ export async function resolveConfig(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<ResolvedConfig> {
   const fromFile = await readConfig(cwd);
-  const envProjectId = env.GBRAIN_PROJECT_ID;
-  const envServerUrl = env.GBRAIN_SERVER_URL;
+  const envProjectId = env.CONTEXTIFY_PROJECT_ID;
+  const envServerUrl = env.CONTEXTIFY_SERVER_URL;
 
   if (envProjectId && envServerUrl) {
     if (!SLUG_RE.test(envProjectId)) {
-      throw new Error('GBRAIN_PROJECT_ID must match [a-zA-Z0-9_-]+');
+      throw new Error('CONTEXTIFY_PROJECT_ID must match [a-zA-Z0-9_-]+');
     }
     return {
       projectId: envProjectId,
@@ -91,7 +91,7 @@ export async function resolveConfig(
 
   if (envProjectId) {
     if (!SLUG_RE.test(envProjectId)) {
-      throw new Error('GBRAIN_PROJECT_ID must match [a-zA-Z0-9_-]+');
+      throw new Error('CONTEXTIFY_PROJECT_ID must match [a-zA-Z0-9_-]+');
     }
     return {
       projectId: envProjectId,
@@ -102,6 +102,6 @@ export async function resolveConfig(
   }
 
   throw new Error(
-    'no gbrain config found — run `gbrain init <projectId>` or set GBRAIN_PROJECT_ID',
+    'no contextify config found — run `contextify init <projectId>` or set CONTEXTIFY_PROJECT_ID',
   );
 }

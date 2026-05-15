@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import { main, VERSION } from './index.js';
 
-describe('@gbrain/cli entry', () => {
+describe('@contextify/cli entry', () => {
   it('--version prints semver and exits 0', async () => {
     const spy = vi.spyOn(process.stdout, 'write').mockImplementation(() => true);
     expect(await main({ argv: ['--version'] })).toBe(0);

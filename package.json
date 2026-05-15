@@ -1,12 +1,12 @@
 {
-  "name": "@gbrain/cli",
+  "name": "@contextify/cli",
   "version": "0.1.0",
   "private": true,
-  "description": "gBrain telemetry CLI — shadows terminal sessions, ships logs to the webhook",
+  "description": "Contextify telemetry CLI — shadows terminal sessions, ships logs to the webhook",
   "type": "module",
   "main": "./dist/index.js",
   "bin": {
-    "gbrain": "./dist/index.js"
+    "contextify": "./dist/index.js"
   },
   "scripts": {
     "build": "tsc -p tsconfig.json",
@@ -18,8 +18,8 @@
     "test": "vitest run"
   },
   "devDependencies": {
-    "@gbrain/eslint-config": "workspace:*",
-    "@gbrain/tsconfig": "workspace:*",
+    "@contextify/eslint-config": "workspace:*",
+    "@contextify/tsconfig": "workspace:*",
     "@types/node": "20.14.10",
     "@typescript-eslint/eslint-plugin": "8.18.2",
     "@typescript-eslint/parser": "8.18.2",

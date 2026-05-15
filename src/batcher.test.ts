@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Batcher } from './batcher.js';
 
-describe('@gbrain/cli Batcher', () => {
+describe('@contextify/cli Batcher', () => {
   beforeEach(() => {
     vi.useFakeTimers();
   });

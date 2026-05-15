@@ -1,1 +1,1 @@
-module.exports = require('@gbrain/eslint-config/library.cjs');
+module.exports = require('@contextify/eslint-config/library.cjs');

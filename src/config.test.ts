@@ -4,11 +4,11 @@ import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { configPath, readConfig, resolveConfig, writeConfig } from './config.js';
 
-describe('@gbrain/cli config', () => {
+describe('@contextify/cli config', () => {
   let cwd: string;
 
   beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), 'gbrain-cfg-'));
+    cwd = mkdtempSync(join(tmpdir(), 'contextify-cfg-'));
   });
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true });
@@ -67,8 +67,8 @@ describe('@gbrain/cli config', () => {
         serverUrl: 'http://localhost:3000',
       });
       const resolved = await resolveConfig(cwd, {
-        GBRAIN_PROJECT_ID: 'rival_empires',
-        GBRAIN_SERVER_URL: 'https://example.com',
+        CONTEXTIFY_PROJECT_ID: 'rival_empires',
+        CONTEXTIFY_SERVER_URL: 'https://example.com',
       });
       expect(resolved.projectId).toBe('rival_empires');
       expect(resolved.serverUrl).toBe('https://example.com');
@@ -77,14 +77,16 @@ describe('@gbrain/cli config', () => {
 
     it('falls back to env-only when no file', async () => {
       const resolved = await resolveConfig(cwd, {
-        GBRAIN_PROJECT_ID: 'rival_empires',
+        CONTEXTIFY_PROJECT_ID: 'rival_empires',
       });
       expect(resolved.source).toBe('env');
       expect(resolved.projectId).toBe('rival_empires');
     });
 
     it('rejects unsafe env project id', async () => {
-      await expect(resolveConfig(cwd, { GBRAIN_PROJECT_ID: "x'; DROP TABLE" })).rejects.toThrow();
+      await expect(
+        resolveConfig(cwd, { CONTEXTIFY_PROJECT_ID: "x'; DROP TABLE" }),
+      ).rejects.toThrow();
     });
 
     it('throws when no source provides a project id', async () => {

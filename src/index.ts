@@ -1,13 +1,13 @@
 #!/usr/bin/env node
 /**
- * gbrain — telemetry CLI.
+ * contextify — telemetry CLI.
  *
  * Commands:
- *   gbrain init <projectId> [--name <name>] [--server <url>] [--force]
- *   gbrain wrap -- <cmd> [args...]
- *   gbrain ship --once
- *   gbrain --version
- *   gbrain --help
+ *   contextify init <projectId> [--name <name>] [--server <url>] [--force]
+ *   contextify wrap -- <cmd> [args...]
+ *   contextify ship --once
+ *   contextify --version
+ *   contextify --help
  */
 import { runInit } from './commands/init.js';
 import { runShip } from './commands/ship.js';
@@ -15,25 +15,25 @@ import { runWrap } from './commands/wrap.js';
 
 export const VERSION = '0.1.0';
 
-const HELP_TEXT = `gbrain — telemetry CLI (v${VERSION})
+const HELP_TEXT = `contextify — telemetry CLI (v${VERSION})
 
 Usage:
-  gbrain init <projectId> [--name <name>] [--server <url>] [--force]
-      Write .gbrain.json in the current directory.
+  contextify init <projectId> [--name <name>] [--server <url>] [--force]
+      Write .contextify.json in the current directory.
 
-  gbrain wrap -- <cmd> [args...]
+  contextify wrap -- <cmd> [args...]
       Spawn the command, mirror its output to your terminal, and ship the
-      capture to the gBrain server in batches.
+      capture to the Contextify server in batches.
 
-  gbrain ship --once
+  contextify ship --once
       Flush any locally-spooled batches (left over from offline runs).
 
-  gbrain --version
-  gbrain --help
+  contextify --version
+  contextify --help
 
 Environment:
-  GBRAIN_SERVER_URL   override server URL
-  GBRAIN_PROJECT_ID   override project id
+  CONTEXTIFY_SERVER_URL   override server URL
+  CONTEXTIFY_PROJECT_ID   override project id
 `;
 
 export interface CliEntry {
@@ -65,7 +65,7 @@ export async function main(entry: CliEntry): Promise<number> {
     case 'ship':
       return runShip({ cwd, env });
     default:
-      process.stderr.write(`gbrain: unknown command '${command}'\n${HELP_TEXT}`);
+      process.stderr.write(`contextify: unknown command '${command}'\n${HELP_TEXT}`);
       return 2;
   }
 }

@@ -12,10 +12,10 @@ const batch: Batch = {
   payload: 'hello',
 };
 
-describe('@gbrain/cli shipper', () => {
+describe('@contextify/cli shipper', () => {
   let cwd: string;
   beforeEach(() => {
-    cwd = mkdtempSync(join(tmpdir(), 'gbrain-ship-'));
+    cwd = mkdtempSync(join(tmpdir(), 'contextify-ship-'));
   });
   afterEach(() => {
     rmSync(cwd, { recursive: true, force: true });

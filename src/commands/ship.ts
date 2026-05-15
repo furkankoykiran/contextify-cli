@@ -11,7 +11,7 @@ export async function runShip(args: ShipArgs): Promise<number> {
   try {
     config = await resolveConfig(args.cwd, args.env);
   } catch (err) {
-    process.stderr.write(`gbrain: ${(err as Error).message}\n`);
+    process.stderr.write(`contextify: ${(err as Error).message}\n`);
     return 2;
   }
   const result = await flushSpool({ serverUrl: config.serverUrl, cwd: args.cwd });

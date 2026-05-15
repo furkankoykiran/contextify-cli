@@ -1,9 +1,9 @@
 /**
- * Wrap integration test: spawn a real child via `gbrain wrap` and verify
+ * Wrap integration test: spawn a real child via `contextify wrap` and verify
  * that its stdout is captured and shipped (here: spooled, since we point
  * at an unreachable server). This exercises the full chain:
  *
- *   child stdout -> Batcher -> shipBatch (network fail) -> .gbrain/spool
+ *   child stdout -> Batcher -> shipBatch (network fail) -> .contextify/spool
  *
  * No DATABASE_URL required.
  */
@@ -16,13 +16,13 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { runWrap } from './commands/wrap.js';
 import { SPOOL_DIR } from './shipper.js';
 
-describe('@gbrain/cli wrap (integration)', () => {
+describe('@contextify/cli wrap (integration)', () => {
   let cwd: string;
 
   beforeEach(async () => {
-    cwd = mkdtempSync(join(tmpdir(), 'gbrain-wrap-'));
+    cwd = mkdtempSync(join(tmpdir(), 'contextify-wrap-'));
     await writeFile(
-      join(cwd, '.gbrain.json'),
+      join(cwd, '.contextify.json'),
       JSON.stringify(
         {
           projectId: 'divimero',

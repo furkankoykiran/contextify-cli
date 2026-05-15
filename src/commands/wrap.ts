@@ -1,8 +1,8 @@
 /**
- * `gbrain wrap -- <cmd> [args...]`
+ * `contextify wrap -- <cmd> [args...]`
  *
  * Spawns the child command, mirrors its stdout/stderr to the user's
- * terminal in real time, and ships batched copies to the gBrain server.
+ * terminal in real time, and ships batched copies to the Contextify server.
  *
  * Trade-off: we use `child_process.spawn` with piped stdio so we avoid
  * a native dep (`node-pty`). Line-based commands (git, pnpm, scripts)
@@ -29,7 +29,7 @@ const DEFAULT_MAX_IDLE_MS = 5_000;
 
 export async function runWrap(opts: WrapOptions): Promise<number> {
   if (opts.argv.length === 0) {
-    process.stderr.write('error: gbrain wrap -- <cmd> [args...]\n');
+    process.stderr.write('error: contextify wrap -- <cmd> [args...]\n');
     return 2;
   }
 
@@ -37,7 +37,7 @@ export async function runWrap(opts: WrapOptions): Promise<number> {
   try {
     config = await resolveConfig(opts.cwd, opts.env);
   } catch (err) {
-    process.stderr.write(`gbrain: ${(err as Error).message}\n`);
+    process.stderr.write(`contextify: ${(err as Error).message}\n`);
     return 2;
   }
 
@@ -86,7 +86,7 @@ export async function runWrap(opts: WrapOptions): Promise<number> {
       else resolve(0);
     });
     child.on('error', (err) => {
-      process.stderr.write(`gbrain: ${err.message}\n`);
+      process.stderr.write(`contextify: ${err.message}\n`);
       resolve(127);
     });
   });

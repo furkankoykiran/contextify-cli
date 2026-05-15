@@ -3,8 +3,8 @@
  *
  * The shipper takes a batch envelope and POSTs it gzip-compressed to the
  * server's /api/telemetry/ingest endpoint. If the server is unreachable
- * or returns a non-2xx, the batch is written to `<cwd>/.gbrain/spool/`
- * so a later `gbrain ship --once` can flush it.
+ * or returns a non-2xx, the batch is written to `<cwd>/.contextify/spool/`
+ * so a later `contextify ship --once` can flush it.
  *
  * The CLI must never block the user's terminal — so all error handling
  * is silent (logs go to stderr only with --verbose, not implemented yet).
@@ -37,7 +37,7 @@ export interface ShipResult {
   readonly error?: string;
 }
 
-export const SPOOL_DIR = '.gbrain/spool';
+export const SPOOL_DIR = '.contextify/spool';
 
 export async function shipBatch(batch: Batch, opts: ShipOptions): Promise<ShipResult> {
   if (opts.forceSpool) {
