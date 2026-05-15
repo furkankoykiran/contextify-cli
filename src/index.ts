@@ -130,7 +130,28 @@ function extractWrapArgv(argv: readonly string[]): string[] {
   return argv.slice(idx + 1);
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+/**
+ * Auto-run guard. Compares the realpath of process.argv[1] against the
+ * realpath of this module — so `npm link` and `npm i -g` (which install
+ * a symlink as `bin/contextify`) still trigger main(). The naïve
+ * `file://${argv[1]}` equality breaks on symlinks because it compares
+ * the symlink path against the module's resolved url.
+ */
+import { realpathSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+function isDirectInvocation(): boolean {
+  if (!process.argv[1]) return false;
+  try {
+    const thisFile = realpathSync(fileURLToPath(import.meta.url));
+    const entry = realpathSync(process.argv[1]);
+    return thisFile === entry;
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectInvocation()) {
   main({ argv: process.argv.slice(2) })
     .then((code) => process.exit(code))
     .catch((err) => {
