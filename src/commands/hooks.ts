@@ -17,6 +17,7 @@ import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { DEFAULT_SERVER_URL } from '../config.js';
+import { resolveApiKey, type ResolvedCredentials } from '../credentials.js';
 import { resolveIdentity, type ResolvedIdentity } from '../identity.js';
 import { flushSpool, shipBatch, type Batch } from '../shipper.js';
 import { parseLatestTurn } from '../transcript.js';
@@ -109,19 +110,22 @@ async function appendLog(stateRoot: string, line: string): Promise<void> {
   }
 }
 
-function serverUrlFromEnv(env: NodeJS.ProcessEnv): string {
-  return env.CONTEXTIFY_SERVER_URL || DEFAULT_SERVER_URL;
+function resolveServerUrl(env: NodeJS.ProcessEnv, creds: ResolvedCredentials | null): string {
+  return env.CONTEXTIFY_SERVER_URL || creds?.serverUrl || DEFAULT_SERVER_URL;
 }
 
 async function upsertProject(
   serverUrl: string,
   identity: ResolvedIdentity,
   fetchImpl: typeof fetch,
+  creds: ResolvedCredentials | null,
 ): Promise<void> {
   const url = new URL('/api/projects', serverUrl).toString();
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (creds) headers.authorization = `Bearer ${creds.apiKey}`;
   await fetchImpl(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers,
     body: JSON.stringify({ id: identity.projectId, name: identity.projectName }),
   });
 }
@@ -143,7 +147,8 @@ async function runSessionStart(
     await appendLog(deps.stateRoot, `session-start: identity error: ${(err as Error).message}`);
     return 0;
   }
-  const serverUrl = serverUrlFromEnv(deps.env);
+  const creds = resolveApiKey(deps.env);
+  const serverUrl = resolveServerUrl(deps.env, creds);
   const state: SessionState = {
     projectId: identity.projectId,
     projectName: identity.projectName,
@@ -152,9 +157,8 @@ async function runSessionStart(
     startedAt: new Date().toISOString(),
   };
   await atomicWriteJson(sessionFile(deps.stateRoot, sessionId), state);
-  // Best-effort upsert. Don't block on failure.
   try {
-    await upsertProject(serverUrl, identity, deps.fetchImpl);
+    await upsertProject(serverUrl, identity, deps.fetchImpl, creds);
   } catch (err) {
     await appendLog(deps.stateRoot, `session-start: upsert failed: ${(err as Error).message}`);
   }

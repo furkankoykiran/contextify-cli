@@ -36,6 +36,8 @@ export interface CredentialsFile {
 export interface ResolvedCredentials {
   readonly apiKey: string;
   readonly source: 'env' | 'file';
+  /** Present only when the source is the on-disk credentials file. */
+  readonly serverUrl?: string;
 }
 
 export function credentialsPath(home: string = homedir()): string {
@@ -58,7 +60,7 @@ export function resolveApiKey(env: NodeJS.ProcessEnv = process.env): ResolvedCre
     const raw = readFileSync(path, 'utf8');
     const parsed = JSON.parse(raw) as CredentialsFile;
     if (parsed?.apiKey && parsed.apiKey.startsWith('ctx_live_')) {
-      return { apiKey: parsed.apiKey, source: 'file' };
+      return { apiKey: parsed.apiKey, source: 'file', serverUrl: parsed.serverUrl };
     }
   } catch {
     // Don't crash on a malformed credentials file — fall through to

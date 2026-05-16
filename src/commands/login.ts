@@ -17,7 +17,7 @@ export interface LoginArgs {
   readonly name?: string;
 }
 
-const KEY_RE = /^ctx_live_[a-z2-9]{8}_[a-z2-9]{32}$/;
+export const KEY_RE = /^ctx_live_[a-z2-9]{8}_[a-z2-9]{32}$/;
 
 export async function runLogin(args: LoginArgs): Promise<number> {
   if (!args.apiKey) {
