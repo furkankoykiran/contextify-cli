@@ -14,6 +14,7 @@
  * stdout stays a single clean artifact.
  */
 import { resolveConfig } from '../config.js';
+import { resolveApiKey } from '../credentials.js';
 
 export interface PromptArgs {
   /** The draft text. Use null to read from stdin. */
@@ -118,11 +119,17 @@ export async function runPrompt(args: PromptArgs, opts: PromptOptions): Promise<
     topK: args.topK,
   };
 
+  // Attach the same Bearer key the hook ships with so /api/prompt/generate
+  // accepts the request. Without this the route 401s on fail-closed deploys.
+  const creds = resolveApiKey(opts.env);
+  const headers: Record<string, string> = { 'content-type': 'application/json' };
+  if (creds) headers.authorization = `Bearer ${creds.apiKey}`;
+
   let res: Response;
   try {
     res = await fetchImpl(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers,
       body: JSON.stringify(body),
     });
   } catch (err) {

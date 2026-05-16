@@ -1,12 +1,10 @@
 /**
  * API key resolution for the CLI.
  *
- * Codex P3.5 prescription:
  *   1. CONTEXTIFY_API_KEY env var wins (hosted/prod via systemd/launchd)
  *   2. ~/.contextify/credentials.json on disk (per-user, persistent)
- *   3. nothing — request goes unauthenticated, server falls back to
- *      LEGACY_TENANT_ID (only allowed when the server has
- *      ALLOW_UNAUTHENTICATED_INGEST=1 or NODE_ENV != production)
+ *   3. nothing — request goes unauthenticated, server returns 401
+ *      (there is no legacy fallback)
  *
  * The credentials file is intentionally NOT inside the project repo —
  * bearer keys must never be committable.
