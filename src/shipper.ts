@@ -13,6 +13,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, readFile, rename, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
+import { resolveApiKey, type ResolvedCredentials } from './credentials.js';
 
 export interface Batch {
   readonly projectId: string;
@@ -33,6 +34,13 @@ export interface ShipOptions {
   readonly timeoutMs?: number;
   /** When true, skip the network attempt entirely and spool. Useful for tests. */
   readonly forceSpool?: boolean;
+  /**
+   * Optional explicit credentials. Defaults to resolving via env then
+   * `~/.contextify/credentials.json`. When null, the request goes
+   * unauthenticated (server falls back to LEGACY_TENANT_ID in dev).
+   * Tests can override this to assert the auth header is present.
+   */
+  readonly credentials?: ResolvedCredentials | null;
 }
 
 export interface ShipResult {
@@ -55,12 +63,20 @@ export async function shipBatch(batch: Batch, opts: ShipOptions): Promise<ShipRe
   const ctrl = new AbortController();
   const timeout = setTimeout(() => ctrl.abort(), opts.timeoutMs ?? 10_000);
   try {
+    // Resolve credentials lazily so call sites can inject test fixtures
+    // via `opts.credentials`. `undefined` triggers the default lookup;
+    // `null` means "send no Authorization header" (explicit unauth).
+    const creds = opts.credentials === undefined ? resolveApiKey() : opts.credentials;
+    const headers: Record<string, string> = {
+      'content-type': 'application/json',
+      'content-encoding': 'gzip',
+    };
+    if (creds) {
+      headers.authorization = `Bearer ${creds.apiKey}`;
+    }
     const res = await fetchImpl(url, {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        'content-encoding': 'gzip',
-      },
+      headers,
       body,
       signal: ctrl.signal,
     });

@@ -79,6 +79,41 @@ describe('@contextify/cli shipper', () => {
       expect(result.status).toBe('spooled');
       expect(fetchImpl).not.toHaveBeenCalled();
     });
+
+    it('sends Authorization: Bearer when credentials are provided', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify({ id: 'x' }), { status: 202 }));
+      await shipBatch(batch, {
+        serverUrl: 'http://example/',
+        cwd,
+        fetchImpl,
+        credentials: {
+          apiKey: 'ctx_live_aaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+          source: 'env',
+        },
+      });
+      const [, init] = fetchImpl.mock.calls[0]!;
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers.authorization).toBe(
+        'Bearer ctx_live_aaaaaaaa_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      );
+    });
+
+    it('sends no Authorization header when credentials are explicitly null', async () => {
+      const fetchImpl = vi
+        .fn<typeof fetch>()
+        .mockResolvedValue(new Response(JSON.stringify({ id: 'x' }), { status: 202 }));
+      await shipBatch(batch, {
+        serverUrl: 'http://example/',
+        cwd,
+        fetchImpl,
+        credentials: null,
+      });
+      const [, init] = fetchImpl.mock.calls[0]!;
+      const headers = (init as RequestInit).headers as Record<string, string>;
+      expect(headers.authorization).toBeUndefined();
+    });
   });
 
   describe('flushSpool', () => {
