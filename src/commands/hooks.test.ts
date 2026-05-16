@@ -195,6 +195,23 @@ describe('contextify hooks <event>', () => {
     expect(existsSync(join(sessions, `${sessionId}.json`))).toBe(false);
   });
 
+  it('session-start sends Authorization header on /api/projects when CONTEXTIFY_API_KEY is set', async () => {
+    const fetchSpy = makeFetchSpy();
+    const sessionId = 'sess-auth';
+    const apiKey = 'ctx_live_abcdefgh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const exit = await runHook('session-start', {
+      env: { CONTEXTIFY_SERVER_URL: 'http://server.test', CONTEXTIFY_API_KEY: apiKey },
+      stateRoot,
+      readStdin: async () =>
+        JSON.stringify({ session_id: sessionId, cwd, hook_event_name: 'SessionStart' }),
+      fetchImpl: fetchSpy as unknown as typeof fetch,
+    });
+    expect(exit).toBe(0);
+    const [, init] = fetchSpy.mock.calls[0]!;
+    const headers = (init as RequestInit).headers as Record<string, string>;
+    expect(headers.authorization).toBe(`Bearer ${apiKey}`);
+  });
+
   it('never throws on malformed stdin — exits 0 silently', async () => {
     const exit = await runHook('stop', {
       stateRoot,

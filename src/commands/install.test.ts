@@ -31,6 +31,7 @@ describe('contextify install', () => {
     const exit = await runInstall(
       {},
       {
+        env: {},
         stateRoot,
         claudeSettingsPath: settingsPath,
         stdout: stdout as unknown as NodeJS.WriteStream,
@@ -49,12 +50,13 @@ describe('contextify install', () => {
   });
 
   it('second run is a no-op — reports "already installed"', async () => {
-    await runInstall({}, { stateRoot, claudeSettingsPath: settingsPath });
+    await runInstall({}, { env: {}, stateRoot, claudeSettingsPath: settingsPath });
     const stdout = makeStream();
     const stderr = makeStream();
     const exit = await runInstall(
       {},
       {
+        env: {},
         stateRoot,
         claudeSettingsPath: settingsPath,
         stdout: stdout as unknown as NodeJS.WriteStream,
@@ -72,7 +74,7 @@ describe('contextify install', () => {
       const originalCwd = process.cwd();
       try {
         process.chdir(cwd);
-        await runInstall({}, { stateRoot, claudeSettingsPath: settingsPath });
+        await runInstall({}, { env: {}, stateRoot, claudeSettingsPath: settingsPath });
       } finally {
         process.chdir(originalCwd);
       }
@@ -93,7 +95,7 @@ describe('contextify install', () => {
         },
       }),
     );
-    await runInstall({}, { stateRoot, claudeSettingsPath: settingsPath });
+    await runInstall({}, { env: {}, stateRoot, claudeSettingsPath: settingsPath });
     const settings = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(settings.permissions.allow).toEqual(['Bash(ls:*)']);
     expect(settings.hooks.PreToolUse).toEqual([
@@ -108,6 +110,7 @@ describe('contextify install', () => {
     const exit = await runInstall(
       { dryRun: true },
       {
+        env: {},
         stateRoot,
         claudeSettingsPath: settingsPath,
         stdout: stdout as unknown as NodeJS.WriteStream,
@@ -119,11 +122,102 @@ describe('contextify install', () => {
       wouldWriteHooks: string[];
       hooksDir: string;
       settingsPath: string;
+      wouldPersistCredentials: { source: string; serverUrl: string | null } | null;
     };
     expect(out.dryRun).toBe(true);
     expect(out.wouldWriteHooks).toEqual(['SessionStart', 'Stop', 'SessionEnd']);
     expect(out.settingsPath).toBe(settingsPath);
-    // Settings file was NOT touched.
+    expect(out.wouldPersistCredentials).toBeNull();
     expect(() => readFileSync(settingsPath, 'utf8')).toThrow();
+  });
+
+  it('persists credentials when --key is provided', async () => {
+    const stdout = makeStream();
+    const calls: Array<{ apiKey: string; serverUrl?: string; name?: string }> = [];
+    const exit = await runInstall(
+      {
+        apiKey: 'ctx_live_abcdefgh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        serverUrl: 'https://contextify.test',
+        name: 'laptop',
+      },
+      {
+        env: {},
+        stateRoot,
+        claudeSettingsPath: settingsPath,
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        saveCredentialsImpl: (file) => {
+          calls.push(file);
+          return `${stateRoot}/credentials.json`;
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.apiKey).toBe('ctx_live_abcdefgh_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa');
+    expect(calls[0]!.serverUrl).toBe('https://contextify.test');
+    expect(calls[0]!.name).toBe('laptop');
+    expect(stdout.collected()).toContain('source=flag');
+  });
+
+  it('auto-detects CONTEXTIFY_API_KEY from env when --key is absent', async () => {
+    const stdout = makeStream();
+    const calls: Array<{ apiKey: string; serverUrl?: string }> = [];
+    const exit = await runInstall(
+      {},
+      {
+        env: {
+          CONTEXTIFY_API_KEY: 'ctx_live_zzzzzzzz_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz',
+          CONTEXTIFY_SERVER_URL: 'https://contextify.test',
+        },
+        stateRoot,
+        claudeSettingsPath: settingsPath,
+        stdout: stdout as unknown as NodeJS.WriteStream,
+        saveCredentialsImpl: (file) => {
+          calls.push(file);
+          return `${stateRoot}/credentials.json`;
+        },
+      },
+    );
+    expect(exit).toBe(0);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]!.apiKey).toBe('ctx_live_zzzzzzzz_zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz');
+    expect(calls[0]!.serverUrl).toBe('https://contextify.test');
+    expect(stdout.collected()).toContain('source=env');
+  });
+
+  it('rejects malformed --key without writing anything', async () => {
+    const stderr = makeStream();
+    let saveCalled = false;
+    const exit = await runInstall(
+      { apiKey: 'not-a-key' },
+      {
+        env: {},
+        stateRoot,
+        claudeSettingsPath: settingsPath,
+        stderr: stderr as unknown as NodeJS.WriteStream,
+        saveCredentialsImpl: () => {
+          saveCalled = true;
+          return '';
+        },
+      },
+    );
+    expect(exit).toBe(2);
+    expect(saveCalled).toBe(false);
+    expect(stderr.collected()).toContain('does not look like a contextify api key');
+  });
+
+  it('warns when no credentials are available — hooks will ship unauthenticated', async () => {
+    const stdout = makeStream();
+    const exit = await runInstall(
+      {},
+      {
+        env: {},
+        stateRoot,
+        claudeSettingsPath: settingsPath,
+        stdout: stdout as unknown as NodeJS.WriteStream,
+      },
+    );
+    expect(exit).toBe(0);
+    expect(stdout.collected()).toContain('credentials:   NOT PERSISTED');
   });
 });
