@@ -1,8 +1,23 @@
-# @furkankoykiran/contextify-cli
+# Contextify CLI
 
-**Telemetry CLI for Contextify — shadows your Claude Code sessions and ships them to your project's memory.**
+> **Open-source CLI for Claude Code: capture sessions, ship transcripts to your memory pipeline, and synthesize Claude-ready prompts.**
 
-Pairs with [Contextify](https://contextify.live), a closed-loop prompt factory: every session you run feeds back into your next prompt. This CLI is the capture half.
+[![npm version](https://img.shields.io/npm/v/@furkankoykiran/contextify-cli.svg)](https://www.npmjs.com/package/@furkankoykiran/contextify-cli)
+[![npm downloads](https://img.shields.io/npm/dm/@furkankoykiran/contextify-cli.svg)](https://www.npmjs.com/package/@furkankoykiran/contextify-cli)
+[![CI](https://github.com/furkankoykiran/contextify-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/furkankoykiran/contextify-cli/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![Node ≥ 20](https://img.shields.io/badge/node-%E2%89%A520.19-brightgreen.svg)](.nvmrc)
+
+`contextify` is the capture half of [Contextify](https://contextify.live) — a closed-loop prompt factory and project memory for Claude Code. It hooks into [Anthropic Claude Code](https://docs.anthropic.com/en/docs/claude-code) sessions on your machine, ships transcripts to your memory pipeline, and turns drafts into Claude-ready prompts grounded in everything your project has already learned.
+
+The CLI is **MIT-licensed and contribution-friendly**. The backend (web app, worker, prompt synthesizer) is closed-source.
+
+## Why use this
+
+- **Claude Code transcript capture** — every `SessionStart`, `Stop`, and `SessionEnd` event is shadowed and streamed without disrupting your flow.
+- **Project memory grounding** — turn a one-line draft into a multi-section, memory-augmented Claude Code prompt with `contextify prompt`.
+- **Zero per-project config** — `project_id` is derived from each session's `cwd` at fire-time. Install once, capture everywhere.
+- **Bring your own server** — point `CONTEXTIFY_SERVER_URL` at `https://contextify.live` or self-host the backend.
 
 ## Install
 
@@ -14,7 +29,7 @@ npm i -g @furkankoykiran/contextify-cli
 
 ## Quick start
 
-1. Create an API key at https://contextify.live/dashboard/keys
+1. Create an API key at [https://contextify.live/dashboard/keys](https://contextify.live/dashboard/keys).
 2. Export the key and the server URL:
    ```bash
    export CONTEXTIFY_API_KEY="ctx_live_..."
@@ -25,7 +40,7 @@ npm i -g @furkankoykiran/contextify-cli
    contextify install
    ```
 
-That's it — every Claude Code session is now captured. `project_id` is derived from each session's `cwd` at fire-time, so no per-project config is needed. Inspect captures and synthesized memories at https://contextify.live/dashboard.
+That's it — every Claude Code session is now captured. Inspect captures and synthesized memories at [https://contextify.live/dashboard](https://contextify.live/dashboard).
 
 ## Commands
 
@@ -50,7 +65,7 @@ That's it — every Claude Code session is now captured. `project_id` is derived
 | `CONTEXTIFY_STATE_DIR`  | Override the `~/.contextify` state directory.                                              |
 | `CLAUDE_SETTINGS_PATH`  | Override the `~/.claude/settings.json` path (useful for tests).                            |
 
-## How identity is resolved
+## How project identity is resolved
 
 Project id resolution stack, first match wins:
 
@@ -59,6 +74,23 @@ Project id resolution stack, first match wins:
 3. Git remote URL of the enclosing repo
 4. `realpath` of the current directory
 
+## Development
+
+```bash
+git clone https://github.com/furkankoykiran/contextify-cli.git
+cd contextify-cli
+pnpm install
+pnpm build
+pnpm test
+```
+
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the full workflow.
+
+## Related
+
+- [Contextify](https://contextify.live) — the hosted prompt factory + project memory.
+- [Anthropic Claude Code](https://docs.anthropic.com/en/docs/claude-code) — the official CLI this tool hooks into.
+
 ## License
 
-MIT
+[MIT](LICENSE) © Furkan Köykıran

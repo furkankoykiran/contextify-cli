@@ -31,9 +31,7 @@ describe('@contextify/cli auto-run guard', () => {
   beforeAll(() => {
     if (!existsSync(distEntry)) {
       // The CLI must be built before this test runs (vitest doesn't trigger tsc).
-      throw new Error(
-        `dist entry not found at ${distEntry} — run \`pnpm --filter @contextify/cli build\` first`,
-      );
+      throw new Error(`dist entry not found at ${distEntry} — run \`pnpm build\` first`);
     }
     tmp = mkdtempSync(join(tmpdir(), 'contextify-bin-'));
     linkPath = join(tmp, 'contextify');

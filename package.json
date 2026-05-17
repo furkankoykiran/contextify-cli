@@ -1,7 +1,7 @@
 {
   "name": "@furkankoykiran/contextify-cli",
   "version": "0.4.3",
-  "description": "Contextify telemetry CLI — shadows terminal sessions, ships logs to the webhook",
+  "description": "Open-source CLI for Claude Code: capture sessions, ship transcripts to your memory pipeline, and synthesize Claude-ready prompts.",
   "keywords": [
     "claude-code",
     "claude",
@@ -13,16 +13,19 @@
     "memory",
     "prompt",
     "prompt-engineering",
-    "cli"
+    "context-engineering",
+    "cli",
+    "agent",
+    "agentic-ai",
+    "developer-tools"
   ],
   "homepage": "https://contextify.live",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/furkankoykiran/contextify.git",
-    "directory": "apps/cli"
+    "url": "git+https://github.com/furkankoykiran/contextify-cli.git"
   },
   "bugs": {
-    "url": "https://github.com/furkankoykiran/contextify/issues"
+    "url": "https://github.com/furkankoykiran/contextify-cli/issues"
   },
   "author": "Furkan Köykıran",
   "license": "MIT",
@@ -68,23 +71,30 @@
     "dist",
     "src/hooks"
   ],
+  "engines": {
+    "node": ">=20.19.0",
+    "pnpm": ">=9"
+  },
+  "packageManager": "pnpm@9.15.0",
   "scripts": {
     "build": "tsc -p tsconfig.json && chmod +x dist/index.js",
     "start": "node ./dist/index.js",
     "dev": "tsc -p tsconfig.json --watch",
-    "clean": "rm -rf dist .turbo *.tsbuildinfo",
+    "clean": "rm -rf dist *.tsbuildinfo",
     "lint": "eslint src --max-warnings=0",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run"
+    "test": "vitest run",
+    "format": "prettier --write \"**/*.{ts,json,md,yml,yaml}\"",
+    "format:check": "prettier --check \"**/*.{ts,json,md,yml,yaml}\"",
+    "prepublishOnly": "pnpm run clean && pnpm run build"
   },
   "devDependencies": {
-    "@contextify/eslint-config": "workspace:*",
-    "@contextify/tsconfig": "workspace:*",
     "@types/node": "20.14.10",
     "@typescript-eslint/eslint-plugin": "8.18.2",
     "@typescript-eslint/parser": "8.18.2",
     "eslint": "8.57.1",
     "eslint-config-prettier": "9.1.0",
+    "prettier": "3.3.3",
     "typescript": "5.5.4",
     "vitest": "2.1.8"
   }

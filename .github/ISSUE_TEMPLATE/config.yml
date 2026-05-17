@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Questions and discussion
+    url: https://github.com/furkankoykiran/contextify-cli/discussions
+    about: For open-ended questions, ideas, and conversations.
+  - name: Contextify (hosted service)
+    url: https://contextify.live
+    about: Manage your projects, API keys, and synthesized memories.
