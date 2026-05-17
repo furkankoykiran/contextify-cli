@@ -315,7 +315,7 @@ describe('updater — runNotifier', () => {
     expect(readOutput()).toBe('');
   });
 
-  it('does not show banner on non-TTY stderr', async () => {
+  it('does not show banner on non-TTY stderr (explicit false)', async () => {
     const env = baseEnv(dir);
     await writeCache(env, {
       latest: '0.5.0',
@@ -325,6 +325,27 @@ describe('updater — runNotifier', () => {
     const chunks: Buffer[] = [];
     const stream = new PassThrough() as unknown as NodeJS.WriteStream;
     (stream as unknown as { isTTY: boolean }).isTTY = false;
+    stream.on('data', (c: Buffer) => chunks.push(c));
+    const res = await runNotifier({ env, currentVersion: '0.4.3' }, stream);
+    expect(res.shown).toBe(false);
+    expect(res.latest).toBe('0.5.0');
+    expect(Buffer.concat(chunks).toString('utf8')).toBe('');
+  });
+
+  it('does not show banner when stderr.isTTY is undefined (redirected/piped)', async () => {
+    // Node sets process.stderr.isTTY to `true` only for real ttys — for
+    // piped or redirected streams it's `undefined`, NOT `false`. The
+    // notifier must treat the undefined case as non-interactive to avoid
+    // polluting captured logs or pipelines.
+    const env = baseEnv(dir);
+    await writeCache(env, {
+      latest: '0.5.0',
+      checkedAt: Date.now(),
+      currentAtCheck: '0.4.3',
+    });
+    const chunks: Buffer[] = [];
+    const stream = new PassThrough() as unknown as NodeJS.WriteStream;
+    // Explicitly do NOT set isTTY — leave it `undefined`.
     stream.on('data', (c: Buffer) => chunks.push(c));
     const res = await runNotifier({ env, currentVersion: '0.4.3' }, stream);
     expect(res.shown).toBe(false);
@@ -353,7 +374,7 @@ describe('updater — detectPackageManager + updateCommandFor', () => {
     expect(detectPackageManager(undefined)).toBe('npm');
   });
 
-  it('produces the right install command per manager', () => {
+  it('produces the right install command per manager (defaults to @latest)', () => {
     expect(updateCommandFor('npm')).toEqual([
       'npm',
       'install',
@@ -371,6 +392,21 @@ describe('updater — detectPackageManager + updateCommandFor', () => {
       'global',
       'add',
       '@furkankoykiran/contextify-cli@latest',
+    ]);
+  });
+
+  it('pins to an explicit version when given', () => {
+    expect(updateCommandFor('npm', '1.2.3')).toEqual([
+      'npm',
+      'install',
+      '-g',
+      '@furkankoykiran/contextify-cli@1.2.3',
+    ]);
+    expect(updateCommandFor('pnpm', '1.2.3')).toEqual([
+      'pnpm',
+      'add',
+      '-g',
+      '@furkankoykiran/contextify-cli@1.2.3',
     ]);
   });
 });
@@ -431,6 +467,7 @@ describe('updater — runUpdate', () => {
     expect(ran).toBe(false);
     expect(stderr.output()).toContain('could not reach npm registry');
     expect(stdout.output()).toContain('--force');
+    // Probe failed, so the fallback command uses @latest.
     expect(stdout.output()).toContain('npm install -g @furkankoykiran/contextify-cli@latest');
   });
 
@@ -479,6 +516,8 @@ describe('updater — runUpdate', () => {
     });
     expect(code).toBe(0);
     expect(ran).toBe(false);
+    // Probe failed, so the fallback command uses @latest (we never verified
+    // a specific version against npmjs).
     expect(stdout.output()).toContain('npm install -g @furkankoykiran/contextify-cli@latest');
     expect(stderr.output()).toContain('could not reach npm registry');
   });
@@ -503,7 +542,8 @@ describe('updater — runUpdate', () => {
     });
     expect(code).toBe(0);
     expect(ran).toBe(false);
-    expect(stdout.output()).toContain('pnpm add -g @furkankoykiran/contextify-cli@latest');
+    // Probed version is pinned to avoid lagging-mirror downgrades.
+    expect(stdout.output()).toContain('pnpm add -g @furkankoykiran/contextify-cli@0.5.0');
   });
 
   it('shells out to the detected manager and refreshes cache on success', async () => {
@@ -524,7 +564,9 @@ describe('updater — runUpdate', () => {
       },
     });
     expect(code).toBe(0);
-    expect(invoked).toEqual(['npm', 'install', '-g', '@furkankoykiran/contextify-cli@latest']);
+    // Probed version is pinned — using @latest could resolve to an older
+    // version on a lagging private mirror and silently downgrade.
+    expect(invoked).toEqual(['npm', 'install', '-g', '@furkankoykiran/contextify-cli@0.5.0']);
     const cachePath = cachePathFor(env);
     expect(existsSync(cachePath)).toBe(true);
     const cached = JSON.parse(readFileSync(cachePath, 'utf8')) as UpdateCache;

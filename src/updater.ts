@@ -348,8 +348,11 @@ export async function runNotifier(
   if (!cache) return { shown: false };
   if (!isUpdateAvailable(opts.currentVersion, cache.latest)) return { shown: false };
 
-  // Only show banner to interactive stderr — keeps machine-parseable output clean.
-  if (typeof stderr.isTTY === 'boolean' && !stderr.isTTY) {
+  // Only show banner to interactive stderr — keeps machine-parseable output
+  // clean. Node sets isTTY to `true` ONLY for real ttys; redirected / piped
+  // streams leave it `undefined` (NOT `false`), so we must treat anything
+  // other than explicit `true` as non-interactive.
+  if (stderr.isTTY !== true) {
     return { shown: false, latest: cache.latest };
   }
 
@@ -379,15 +382,21 @@ export function detectPackageManager(argv1: string | undefined): PackageManager 
   return 'npm';
 }
 
-export function updateCommandFor(pm: PackageManager): readonly string[] {
+export function updateCommandFor(pm: PackageManager, version = 'latest'): readonly string[] {
+  // Pin to an explicit version when we verified one against the npm registry.
+  // If the user's package manager points at a lagging private mirror,
+  // `@latest` could still resolve to an older version and silently downgrade
+  // them; pinning the exact version we probed avoids that. Fallback path
+  // (--force without a probed version) passes `latest`.
+  const spec = `${PACKAGE_NAME}@${version}`;
   switch (pm) {
     case 'pnpm':
-      return ['pnpm', 'add', '-g', `${PACKAGE_NAME}@latest`];
+      return ['pnpm', 'add', '-g', spec];
     case 'yarn':
-      return ['yarn', 'global', 'add', `${PACKAGE_NAME}@latest`];
+      return ['yarn', 'global', 'add', spec];
     case 'npm':
     default:
-      return ['npm', 'install', '-g', `${PACKAGE_NAME}@latest`];
+      return ['npm', 'install', '-g', spec];
   }
 }
 
@@ -417,7 +426,6 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<number> {
 
   const latest = await fetcher();
   const pm = detectPackageManager(opts.argv1 ?? process.argv[1]);
-  const cmd = updateCommandFor(pm);
 
   // If our direct probe to registry.npmjs.org failed (corporate proxy, custom
   // mirror, IPv6-only, registry outage, rate limit), the user's package
@@ -427,11 +435,14 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<number> {
   // doing so silently DOWNGRADES them. So: print the command, explain, and
   // require --force to actually run it.
   if (latest === null) {
+    // Fallback path: we don't know the target version, so `@latest` is the
+    // best we can do. The user opted in via --force.
+    const fallbackCmd = updateCommandFor(pm, 'latest');
     stderr.write(
       `contextify: could not reach npm registry directly. ` +
         `Cannot confirm whether ${PACKAGE_NAME}@latest is newer than ${opts.currentVersion}.\n`,
     );
-    stdout.write(`Run manually:  ${cmd.join(' ')}\n`);
+    stdout.write(`Run manually:  ${fallbackCmd.join(' ')}\n`);
     if (opts.check) return 0;
     if (!opts.force) {
       stdout.write(`Or re-run with --force to install @latest anyway.\n`);
@@ -440,14 +451,19 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<number> {
     stdout.write(
       `--force given; deferring to ${pm} (note: this may downgrade if ${PACKAGE_NAME}@latest < ${opts.currentVersion}).\n`,
     );
-    stdout.write(`$ ${cmd.join(' ')}\n`);
-    return runInstall(opts, cmd, undefined, stdout, stderr);
+    stdout.write(`$ ${fallbackCmd.join(' ')}\n`);
+    return runInstall(opts, fallbackCmd, undefined, stdout, stderr);
   }
 
   if (!isUpdateAvailable(opts.currentVersion, latest)) {
     stdout.write(`contextify ${opts.currentVersion} is already the latest version.\n`);
     return 0;
   }
+
+  // Pin to the exact verified version. Using `@latest` here would let a
+  // lagging private mirror return an older release than the one we just
+  // confirmed on npmjs.org, silently downgrading the user.
+  const cmd = updateCommandFor(pm, latest);
 
   if (opts.check) {
     stdout.write(`Update available: ${opts.currentVersion} → ${latest}\n`);
