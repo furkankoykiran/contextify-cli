@@ -27,7 +27,11 @@ import { fileURLToPath } from 'node:url';
 export const PACKAGE_NAME = '@furkankoykiran/contextify-cli';
 export const REGISTRY_URL = `https://registry.npmjs.org/${encodeURIComponent(PACKAGE_NAME).replace('%40', '@')}/latest`;
 export const UPDATE_CHECK_INTERVAL_MS = 24 * 60 * 60 * 1000; // 24h
+/** When the registry probe fails, retry after this long instead of every invocation. */
+export const PROBE_BACKOFF_MS = 60 * 60 * 1000; // 1h
 const HTTP_TIMEOUT_MS = 5_000;
+/** Hard cap on the registry response body — the JSON we want is well under 8KB. */
+const MAX_RESPONSE_BYTES = 256 * 1024;
 
 export interface UpdateCache {
   /** Latest version observed on the registry (or '' if probe failed). */
@@ -73,7 +77,13 @@ export interface ParsedVersion {
   readonly prerelease: readonly string[];
 }
 
-const SEMVER_RE = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
+// Numeric identifiers MUST NOT have leading zeroes per SemVer 2.0.0 §2 / §9.
+const NUMERIC_ID = '(?:0|[1-9]\\d*)';
+const PRERELEASE_ID = '(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9A-Za-z-]*)';
+const PRERELEASE = `(?:${PRERELEASE_ID}(?:\\.${PRERELEASE_ID})*)`;
+const SEMVER_RE = new RegExp(
+  `^v?(${NUMERIC_ID})\\.(${NUMERIC_ID})\\.(${NUMERIC_ID})(?:-(${PRERELEASE}))?(?:\\+[0-9A-Za-z.-]+)?$`,
+);
 
 export function parseVersion(v: string): ParsedVersion | null {
   const m = SEMVER_RE.exec(v.trim());
@@ -192,8 +202,21 @@ export async function fetchLatestVersion(timeoutMs = HTTP_TIMEOUT_MS): Promise<s
           return;
         }
         const chunks: Buffer[] = [];
-        res.on('data', (c: Buffer) => chunks.push(c));
+        let received = 0;
+        let aborted = false;
+        res.on('data', (c: Buffer) => {
+          if (aborted) return;
+          received += c.length;
+          if (received > MAX_RESPONSE_BYTES) {
+            aborted = true;
+            res.destroy();
+            resolve(null);
+            return;
+          }
+          chunks.push(c);
+        });
         res.on('end', () => {
+          if (aborted) return;
           try {
             const body = Buffer.concat(chunks).toString('utf8');
             const json = JSON.parse(body) as { version?: unknown };
@@ -226,7 +249,10 @@ export function shouldSpawnProbe(
 ): boolean {
   if (!cache) return true;
   if (cache.currentAtCheck !== currentVersion) return true; // user upgraded; recheck
-  return now - cache.checkedAt >= UPDATE_CHECK_INTERVAL_MS;
+  // A failed probe writes a cache with latest='' — back off PROBE_BACKOFF_MS
+  // instead of the full 24h, but still throttle so we don't respawn every call.
+  const interval = cache.latest === '' ? PROBE_BACKOFF_MS : UPDATE_CHECK_INTERVAL_MS;
+  return now - cache.checkedAt >= interval;
 }
 
 export function spawnProbeIfNeeded(opts: UpdaterOptions, cache: UpdateCache | null): void {
@@ -239,19 +265,40 @@ export function spawnProbeIfNeeded(opts: UpdaterOptions, cache: UpdateCache | nu
       stdio: 'ignore',
       env: { ...opts.env, CONTEXTIFY_UPDATER_PROBE: '1' },
     });
+    // spawn reports OS-level failures (EMFILE, EAGAIN, Windows ENOENT) via an
+    // 'error' event on the returned ChildProcess — NOT via the synchronous
+    // throw caught below. Without a listener, Node would crash the foreground
+    // CLI command on an unhandled error event.
+    child.on('error', () => {
+      // Best-effort: swallow. The next invocation will retry per
+      // shouldSpawnProbe / PROBE_BACKOFF_MS gating.
+    });
     child.unref();
   } catch {
-    // Probe failure is non-fatal — we'll try again on the next invocation.
+    // Synchronous spawn failure (rare — most platforms surface via 'error').
   }
 }
 
 /** Runs inside the detached child: fetch + write cache, then exit. */
 export async function runProbe(opts: UpdaterOptions): Promise<void> {
   const latest = await fetchLatestVersion();
-  if (latest === null) return; // network failure — leave the existing cache alone
+  const now = (opts.now ?? Date.now)();
+  if (latest === null) {
+    // Negative-cache the failure so we don't respawn a probe on every
+    // invocation while the registry is unreachable. Preserve any
+    // previously-known latest so the banner doesn't disappear during a
+    // transient outage.
+    const existing = await readCache(opts.env);
+    await writeCache(opts.env, {
+      latest: existing?.latest ?? '',
+      checkedAt: now,
+      currentAtCheck: opts.currentVersion,
+    });
+    return;
+  }
   await writeCache(opts.env, {
     latest,
-    checkedAt: (opts.now ?? Date.now)(),
+    checkedAt: now,
     currentAtCheck: opts.currentVersion,
   });
 }
@@ -307,7 +354,10 @@ export type PackageManager = 'npm' | 'pnpm' | 'yarn';
  */
 export function detectPackageManager(argv1: string | undefined): PackageManager {
   if (!argv1) return 'npm';
-  const norm = resolvePath(argv1).replace(/\\/g, '/');
+  // Lowercase the normalized path: Windows is case-insensitive on filesystem
+  // and Yarn classic installs under %LOCALAPPDATA%\Yarn\... — without this
+  // a Yarn-owned install would fall through to npm.
+  const norm = resolvePath(argv1).replace(/\\/g, '/').toLowerCase();
   if (norm.includes('/pnpm/') || norm.includes('/.pnpm/')) return 'pnpm';
   if (norm.includes('/yarn/') || norm.includes('/.yarn/')) return 'yarn';
   return 'npm';
@@ -343,18 +393,32 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<number> {
   const fetcher = opts.fetchLatest ?? (() => fetchLatestVersion());
 
   const latest = await fetcher();
+  const pm = detectPackageManager(opts.argv1 ?? process.argv[1]);
+  const cmd = updateCommandFor(pm);
+
+  // If our direct probe to registry.npmjs.org failed (corporate proxy, custom
+  // mirror, IPv6-only, registry outage), still defer to the package manager —
+  // it owns the user's registry/mirror/auth config and will succeed where we
+  // can't. We just lose the "already at latest" / version-diff messaging.
   if (latest === null) {
-    stderr.write(`contextify: could not reach npm registry — try again later.\n`);
-    return 1;
+    if (opts.check) {
+      stderr.write(
+        `contextify: could not reach npm registry directly. Your package manager may still be able to fetch a newer version.\n`,
+      );
+      stdout.write(`Run:  ${cmd.join(' ')}\n`);
+      return 0;
+    }
+    stdout.write(
+      `Updating contextify via ${pm} (registry probe failed; deferring to the package manager)…\n`,
+    );
+    stdout.write(`$ ${cmd.join(' ')}\n`);
+    return runInstall(opts, cmd, undefined, stdout, stderr);
   }
 
   if (!isUpdateAvailable(opts.currentVersion, latest)) {
     stdout.write(`contextify ${opts.currentVersion} is already the latest version.\n`);
     return 0;
   }
-
-  const pm = detectPackageManager(opts.argv1 ?? process.argv[1]);
-  const cmd = updateCommandFor(pm);
 
   if (opts.check) {
     stdout.write(`Update available: ${opts.currentVersion} → ${latest}\n`);
@@ -364,7 +428,16 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<number> {
 
   stdout.write(`Updating contextify ${opts.currentVersion} → ${latest} via ${pm}…\n`);
   stdout.write(`$ ${cmd.join(' ')}\n`);
+  return runInstall(opts, cmd, latest, stdout, stderr);
+}
 
+async function runInstall(
+  opts: RunUpdateOptions,
+  cmd: readonly string[],
+  latest: string | undefined,
+  stdout: NodeJS.WriteStream,
+  stderr: NodeJS.WriteStream,
+): Promise<number> {
   const runner =
     opts.runCommand ??
     ((c) =>
@@ -382,17 +455,32 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<number> {
 
   const code = await runner(cmd);
   if (code === 0) {
-    // Invalidate the cache so the banner stops showing immediately.
-    try {
-      await writeCache(opts.env, {
-        latest,
-        checkedAt: Date.now(),
-        currentAtCheck: latest,
-      });
-    } catch {
-      // Non-fatal: stale banner will self-heal on next probe.
+    if (latest !== undefined) {
+      // Invalidate the cache so the banner stops showing immediately.
+      try {
+        await writeCache(opts.env, {
+          latest,
+          checkedAt: Date.now(),
+          currentAtCheck: latest,
+        });
+      } catch {
+        // Non-fatal: stale banner will self-heal on next probe.
+      }
+      stdout.write(`contextify updated to ${latest}.\n`);
+    } else {
+      // We deferred to the package manager without knowing the target version;
+      // drop the cache so the next probe re-establishes ground truth.
+      try {
+        await writeCache(opts.env, {
+          latest: '',
+          checkedAt: 0,
+          currentAtCheck: opts.currentVersion,
+        });
+      } catch {
+        // Non-fatal.
+      }
+      stdout.write(`contextify update complete.\n`);
     }
-    stdout.write(`contextify updated to ${latest}.\n`);
   } else {
     stderr.write(`contextify: update failed (exit ${code}).\n`);
   }

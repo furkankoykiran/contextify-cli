@@ -97,8 +97,11 @@ export async function main(entry: CliEntry): Promise<number> {
   const cwd = entry.cwd ?? process.cwd();
   const env = entry.env ?? process.env;
 
-  // Strip --no-update-check before command dispatch so subcommands don't see it.
-  const noUpdateFlag = stripFlag(argv, '--no-update-check');
+  // Strip --no-update-check only when it appears BEFORE the subcommand and
+  // BEFORE any `--` separator. Otherwise a command like
+  // `contextify wrap -- mycmd --no-update-check` would silently drop the flag
+  // meant for the wrapped child process.
+  const noUpdateFlag = stripGlobalFlag(argv, '--no-update-check');
 
   if (argv.includes('--version') || argv.includes('-v')) {
     process.stdout.write(`${VERSION}\n`);
@@ -167,11 +170,26 @@ async function dispatch(
   }
 }
 
-function stripFlag(argv: string[], flag: string): boolean {
-  const idx = argv.indexOf(flag);
-  if (idx === -1) return false;
-  argv.splice(idx, 1);
-  return true;
+/**
+ * Strip a global flag that appears BEFORE the subcommand position and BEFORE
+ * any `--` separator. Anything after the subcommand belongs to the subcommand
+ * (or, for `wrap --`, to the wrapped child process).
+ */
+export function stripGlobalFlag(argv: string[], flag: string): boolean {
+  let found = false;
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === '--') break;
+    if (arg === flag) {
+      argv.splice(i, 1);
+      found = true;
+      i--;
+      continue;
+    }
+    // Once we hit the first non-flag token, that's the subcommand — stop.
+    if (!arg.startsWith('-')) break;
+  }
+  return found;
 }
 
 function isHookEvent(s: string | undefined): s is HookEvent {

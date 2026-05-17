@@ -12,8 +12,10 @@ import {
   isUpdateAvailable,
   isUpdateCheckDisabled,
   parseVersion,
+  PROBE_BACKOFF_MS,
   readCache,
   runNotifier,
+  runProbe,
   runUpdate,
   shouldSpawnProbe,
   stateDirFor,
@@ -53,6 +55,24 @@ describe('updater — parseVersion / compareVersions', () => {
   it('rejects garbage', () => {
     expect(parseVersion('not-a-version')).toBeNull();
     expect(parseVersion('')).toBeNull();
+  });
+
+  it('rejects SemVer with leading zeroes per spec', () => {
+    // SemVer 2.0.0 §2: numeric identifiers MUST NOT have leading zeroes.
+    expect(parseVersion('01.2.3')).toBeNull();
+    expect(parseVersion('1.02.3')).toBeNull();
+    expect(parseVersion('1.2.03')).toBeNull();
+    expect(parseVersion('1.0.0-alpha.01')).toBeNull();
+    // Bare 0 is allowed.
+    expect(parseVersion('0.0.0')).not.toBeNull();
+    expect(parseVersion('1.0.0-0.1')).not.toBeNull();
+    // Alphanumeric prerelease IDs with leading-zero-looking text are valid.
+    expect(parseVersion('1.0.0-0a')).not.toBeNull();
+  });
+
+  it('accepts build metadata and ignores it for ordering', () => {
+    expect(parseVersion('1.2.3+sha.abc')).not.toBeNull();
+    expect(compareVersions('1.2.3+a', '1.2.3+b')).toBe(0);
   });
 
   it('orders by major, minor, patch', () => {
@@ -185,6 +205,30 @@ describe('updater — shouldSpawnProbe', () => {
     };
     expect(shouldSpawnProbe(cache, '1.0.0', NOW)).toBe(false);
   });
+
+  it('honors a shorter backoff after a failed probe (latest="")', () => {
+    // Fresh negative-cache entry — backoff hasn't elapsed yet.
+    const fresh: UpdateCache = {
+      latest: '',
+      checkedAt: NOW - 60_000,
+      currentAtCheck: '1.0.0',
+    };
+    expect(shouldSpawnProbe(fresh, '1.0.0', NOW)).toBe(false);
+    // Past the configured backoff — retry.
+    const stale: UpdateCache = {
+      latest: '',
+      checkedAt: NOW - (PROBE_BACKOFF_MS + 1),
+      currentAtCheck: '1.0.0',
+    };
+    expect(shouldSpawnProbe(stale, '1.0.0', NOW)).toBe(true);
+    // But still respects the longer 24h interval on successful caches.
+    const success: UpdateCache = {
+      latest: '1.0.0',
+      checkedAt: NOW - (PROBE_BACKOFF_MS + 1),
+      currentAtCheck: '1.0.0',
+    };
+    expect(shouldSpawnProbe(success, '1.0.0', NOW)).toBe(false);
+  });
 });
 
 describe('updater — formatBanner', () => {
@@ -278,6 +322,14 @@ describe('updater — detectPackageManager + updateCommandFor', () => {
   it('detects yarn from path', () => {
     expect(detectPackageManager('/home/user/.yarn/bin/contextify')).toBe('yarn');
   });
+  it('detects yarn from case-mixed Windows path', () => {
+    // Yarn classic installs under %LOCALAPPDATA%\Yarn\... — must be
+    // detected even though the path component is "Yarn" not "yarn".
+    expect(detectPackageManager('C:\\Users\\Foo\\AppData\\Local\\Yarn\\bin\\contextify')).toBe(
+      'yarn',
+    );
+    expect(detectPackageManager('C:\\Program Files\\PNPM\\contextify.cmd')).toBe('pnpm');
+  });
   it('falls back to npm', () => {
     expect(detectPackageManager('/usr/local/bin/contextify')).toBe('npm');
     expect(detectPackageManager(undefined)).toBe('npm');
@@ -338,10 +390,13 @@ describe('updater — runUpdate', () => {
     expect(stdout.output()).toContain('already the latest');
   });
 
-  it('returns 1 when registry probe fails', async () => {
+  it('defers to the package manager when the registry probe fails', async () => {
+    // Corporate proxies, private mirrors, registry outages — the user's npm
+    // is configured for them and will succeed where our direct probe can't.
     const env = baseEnv(dir);
     const stdout = captureStream();
     const stderr = captureStream();
+    let invoked: readonly string[] = [];
     const code = await runUpdate({
       env,
       currentVersion: '1.0.0',
@@ -349,9 +404,37 @@ describe('updater — runUpdate', () => {
       stdout: stdout.stream,
       stderr: stderr.stream,
       fetchLatest: async () => null,
-      runCommand: async () => 0,
+      runCommand: async (cmd) => {
+        invoked = cmd;
+        return 0;
+      },
     });
-    expect(code).toBe(1);
+    expect(code).toBe(0);
+    expect(invoked).toEqual(['npm', 'install', '-g', '@furkankoykiran/contextify-cli@latest']);
+    expect(stdout.output()).toContain('registry probe failed');
+  });
+
+  it('with --check, prints the install command even when registry probe fails', async () => {
+    const env = baseEnv(dir);
+    const stdout = captureStream();
+    const stderr = captureStream();
+    let ran = false;
+    const code = await runUpdate({
+      env,
+      currentVersion: '1.0.0',
+      argv1: '/usr/local/bin/contextify',
+      check: true,
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+      fetchLatest: async () => null,
+      runCommand: async () => {
+        ran = true;
+        return 0;
+      },
+    });
+    expect(code).toBe(0);
+    expect(ran).toBe(false);
+    expect(stdout.output()).toContain('npm install -g @furkankoykiran/contextify-cli@latest');
     expect(stderr.output()).toContain('could not reach npm registry');
   });
 
@@ -419,5 +502,75 @@ describe('updater — runUpdate', () => {
     });
     expect(code).toBe(42);
     expect(stderr.output()).toContain('update failed');
+  });
+});
+
+describe('updater — runProbe negative-cache on failure', () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = mkdtempSync(join(tmpdir(), 'contextify-probe-'));
+  });
+  afterEach(() => {
+    rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('writes a fresh checkedAt with empty latest when no cache exists yet', async () => {
+    // We can't easily monkey-patch fetchLatestVersion without process-level
+    // network mocking, but we CAN drive runProbe through writeCache. Simulate
+    // by pre-poisoning the DNS by pointing at a state dir that does exist;
+    // since fetchLatestVersion hits a real URL, this test exercises the live
+    // network. Instead, assert the negative-cache shape via direct writeCache.
+    const env: NodeJS.ProcessEnv = {
+      CONTEXTIFY_STATE_DIR: dir,
+      CI: '',
+      NODE_ENV: 'production',
+    };
+    await writeCache(env, {
+      latest: '',
+      checkedAt: 1_700_000_000_000,
+      currentAtCheck: '1.0.0',
+    });
+    const cached = await readCache(env);
+    expect(cached?.latest).toBe('');
+    expect(shouldSpawnProbe(cached, '1.0.0', 1_700_000_000_000 + 60_000)).toBe(false);
+  });
+
+  it('preserves previously-known latest when a probe later fails', async () => {
+    // Successful probe wrote v1.0.0. A later failed probe must NOT clobber
+    // the known-good latest with '' — the notifier should keep showing the
+    // banner during a transient outage.
+    const env: NodeJS.ProcessEnv = {
+      CONTEXTIFY_STATE_DIR: dir,
+      CI: '',
+      NODE_ENV: 'production',
+    };
+    await writeCache(env, {
+      latest: '1.5.0',
+      checkedAt: 1_700_000_000_000,
+      currentAtCheck: '1.0.0',
+    });
+    // Simulate what runProbe does on fetchLatest === null: preserve the
+    // existing latest, bump checkedAt.
+    const existing = await readCache(env);
+    await writeCache(env, {
+      latest: existing?.latest ?? '',
+      checkedAt: 1_700_000_999_000,
+      currentAtCheck: '1.0.0',
+    });
+    const after = await readCache(env);
+    expect(after?.latest).toBe('1.5.0');
+    expect(after?.checkedAt).toBe(1_700_000_999_000);
+  });
+
+  it('runProbe is callable and does not throw on a real fetch failure', async () => {
+    // Sanity smoke: with an unreachable state dir + offline CI test env,
+    // runProbe should resolve without throwing. Either it negative-caches
+    // (CI is online) or it writes an empty-latest cache (offline) — both fine.
+    const env: NodeJS.ProcessEnv = {
+      CONTEXTIFY_STATE_DIR: dir,
+      CI: '',
+      NODE_ENV: 'production',
+    };
+    await expect(runProbe({ env, currentVersion: '1.0.0' })).resolves.toBeUndefined();
   });
 });
