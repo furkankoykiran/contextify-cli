@@ -1,6 +1,6 @@
 {
   "name": "@furkankoykiran/contextify-cli",
-  "version": "0.4.3",
+  "version": "0.4.4",
   "description": "Open-source CLI for Claude Code: capture sessions, ship transcripts to your memory pipeline, and synthesize Claude-ready prompts.",
   "keywords": [
     "claude-code",
