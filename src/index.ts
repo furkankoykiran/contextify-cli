@@ -70,10 +70,12 @@ Usage:
       payload from stdin and ships the matching event (dialog turn,
       user prompt, or tool execution) to the server.
 
-  contextify update [--check]
+  contextify update [--check] [--force]
       Pull the latest published CLI from npm via the package manager
       that owns the running binary (npm/pnpm/yarn). Pass --check to
-      print the upgrade command without executing it.
+      print the upgrade command without executing it. Pass --force to
+      install @latest even when the registry probe failed (may downgrade
+      if you're running a prerelease build).
 
   contextify --version
   contextify --help

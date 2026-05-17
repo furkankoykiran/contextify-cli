@@ -206,28 +206,46 @@ describe('updater — shouldSpawnProbe', () => {
     expect(shouldSpawnProbe(cache, '1.0.0', NOW)).toBe(false);
   });
 
-  it('honors a shorter backoff after a failed probe (latest="")', () => {
-    // Fresh negative-cache entry — backoff hasn't elapsed yet.
+  it('honors PROBE_BACKOFF_MS via failedAt without resetting the 24h interval', () => {
+    // Fresh failure — short backoff hasn't elapsed.
     const fresh: UpdateCache = {
       latest: '',
-      checkedAt: NOW - 60_000,
+      checkedAt: 0,
+      failedAt: NOW - 60_000,
       currentAtCheck: '1.0.0',
     };
     expect(shouldSpawnProbe(fresh, '1.0.0', NOW)).toBe(false);
     // Past the configured backoff — retry.
     const stale: UpdateCache = {
       latest: '',
-      checkedAt: NOW - (PROBE_BACKOFF_MS + 1),
+      checkedAt: 0,
+      failedAt: NOW - (PROBE_BACKOFF_MS + 1),
       currentAtCheck: '1.0.0',
     };
     expect(shouldSpawnProbe(stale, '1.0.0', NOW)).toBe(true);
-    // But still respects the longer 24h interval on successful caches.
+    // Still respects the 24h interval on successful caches (no failedAt).
     const success: UpdateCache = {
       latest: '1.0.0',
       checkedAt: NOW - (PROBE_BACKOFF_MS + 1),
       currentAtCheck: '1.0.0',
     };
     expect(shouldSpawnProbe(success, '1.0.0', NOW)).toBe(false);
+  });
+
+  it('failedAt overrides a still-fresh checkedAt — transient outage retries in 1h, not 24h', () => {
+    // Scenario: 12h ago we successfully fetched v1.0.0. Just now a recheck
+    // failed. The next retry must happen in PROBE_BACKOFF_MS, NOT wait the
+    // remaining 12h until the next 24h checkedAt window — otherwise a
+    // transient outage at the wrong moment suppresses checks for a full day.
+    const cache: UpdateCache = {
+      latest: '1.0.0',
+      checkedAt: NOW - 12 * 60 * 60 * 1000,
+      failedAt: NOW - 60_000, // failure 1 minute ago
+      currentAtCheck: '1.0.0',
+    };
+    expect(shouldSpawnProbe(cache, '1.0.0', NOW)).toBe(false); // backoff active
+    // After PROBE_BACKOFF_MS, retry — even though checkedAt is still "fresh".
+    expect(shouldSpawnProbe(cache, '1.0.0', NOW + PROBE_BACKOFF_MS)).toBe(true);
   });
 });
 
@@ -390,7 +408,33 @@ describe('updater — runUpdate', () => {
     expect(stdout.output()).toContain('already the latest');
   });
 
-  it('defers to the package manager when the registry probe fails', async () => {
+  it('without --force, aborts when the registry probe fails (no silent downgrade)', async () => {
+    // Blindly running `npm install -g pkg@latest` would silently downgrade
+    // users on a local/prerelease build ahead of the registry's `latest`.
+    const env = baseEnv(dir);
+    const stdout = captureStream();
+    const stderr = captureStream();
+    let ran = false;
+    const code = await runUpdate({
+      env,
+      currentVersion: '1.0.0',
+      argv1: '/usr/local/bin/contextify',
+      stdout: stdout.stream,
+      stderr: stderr.stream,
+      fetchLatest: async () => null,
+      runCommand: async () => {
+        ran = true;
+        return 0;
+      },
+    });
+    expect(code).toBe(1);
+    expect(ran).toBe(false);
+    expect(stderr.output()).toContain('could not reach npm registry');
+    expect(stdout.output()).toContain('--force');
+    expect(stdout.output()).toContain('npm install -g @furkankoykiran/contextify-cli@latest');
+  });
+
+  it('with --force, defers to the package manager when the registry probe fails', async () => {
     // Corporate proxies, private mirrors, registry outages — the user's npm
     // is configured for them and will succeed where our direct probe can't.
     const env = baseEnv(dir);
@@ -401,6 +445,7 @@ describe('updater — runUpdate', () => {
       env,
       currentVersion: '1.0.0',
       argv1: '/usr/local/bin/contextify',
+      force: true,
       stdout: stdout.stream,
       stderr: stderr.stream,
       fetchLatest: async () => null,
@@ -411,7 +456,7 @@ describe('updater — runUpdate', () => {
     });
     expect(code).toBe(0);
     expect(invoked).toEqual(['npm', 'install', '-g', '@furkankoykiran/contextify-cli@latest']);
-    expect(stdout.output()).toContain('registry probe failed');
+    expect(stdout.output()).toContain('--force given');
   });
 
   it('with --check, prints the install command even when registry probe fails', async () => {
@@ -514,12 +559,7 @@ describe('updater — runProbe negative-cache on failure', () => {
     rmSync(dir, { recursive: true, force: true });
   });
 
-  it('writes a fresh checkedAt with empty latest when no cache exists yet', async () => {
-    // We can't easily monkey-patch fetchLatestVersion without process-level
-    // network mocking, but we CAN drive runProbe through writeCache. Simulate
-    // by pre-poisoning the DNS by pointing at a state dir that does exist;
-    // since fetchLatestVersion hits a real URL, this test exercises the live
-    // network. Instead, assert the negative-cache shape via direct writeCache.
+  it('round-trips the failedAt field through writeCache / readCache', async () => {
     const env: NodeJS.ProcessEnv = {
       CONTEXTIFY_STATE_DIR: dir,
       CI: '',
@@ -527,18 +567,22 @@ describe('updater — runProbe negative-cache on failure', () => {
     };
     await writeCache(env, {
       latest: '',
-      checkedAt: 1_700_000_000_000,
+      checkedAt: 0,
+      failedAt: 1_700_000_000_000,
       currentAtCheck: '1.0.0',
     });
     const cached = await readCache(env);
     expect(cached?.latest).toBe('');
+    expect(cached?.failedAt).toBe(1_700_000_000_000);
+    // Within backoff — no respawn.
     expect(shouldSpawnProbe(cached, '1.0.0', 1_700_000_000_000 + 60_000)).toBe(false);
   });
 
-  it('preserves previously-known latest when a probe later fails', async () => {
-    // Successful probe wrote v1.0.0. A later failed probe must NOT clobber
-    // the known-good latest with '' — the notifier should keep showing the
-    // banner during a transient outage.
+  it('preserves previously-known latest AND checkedAt when a probe later fails', async () => {
+    // Successful probe wrote v1.5.0 at t=A. A later failed probe writes a
+    // new failedAt but must NOT clobber:
+    //   - latest (banner keeps showing during transient outage)
+    //   - checkedAt (so the 24h interval isn't silently reset by a failure)
     const env: NodeJS.ProcessEnv = {
       CONTEXTIFY_STATE_DIR: dir,
       CI: '',
@@ -549,17 +593,19 @@ describe('updater — runProbe negative-cache on failure', () => {
       checkedAt: 1_700_000_000_000,
       currentAtCheck: '1.0.0',
     });
-    // Simulate what runProbe does on fetchLatest === null: preserve the
-    // existing latest, bump checkedAt.
+    // Simulate what runProbe does on fetchLatest === null: keep latest +
+    // checkedAt, add failedAt with the failure timestamp.
     const existing = await readCache(env);
     await writeCache(env, {
       latest: existing?.latest ?? '',
-      checkedAt: 1_700_000_999_000,
+      checkedAt: existing?.checkedAt ?? 0,
+      failedAt: 1_700_000_999_000,
       currentAtCheck: '1.0.0',
     });
     const after = await readCache(env);
     expect(after?.latest).toBe('1.5.0');
-    expect(after?.checkedAt).toBe(1_700_000_999_000);
+    expect(after?.checkedAt).toBe(1_700_000_000_000);
+    expect(after?.failedAt).toBe(1_700_000_999_000);
   });
 
   it('runProbe is callable and does not throw on a real fetch failure', async () => {

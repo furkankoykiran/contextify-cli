@@ -34,10 +34,18 @@ const HTTP_TIMEOUT_MS = 5_000;
 const MAX_RESPONSE_BYTES = 256 * 1024;
 
 export interface UpdateCache {
-  /** Latest version observed on the registry (or '' if probe failed). */
+  /** Latest version observed on the registry (or '' if no successful probe yet). */
   readonly latest: string;
-  /** Epoch ms of the last successful probe. */
+  /** Epoch ms of the last *successful* probe. */
   readonly checkedAt: number;
+  /**
+   * Epoch ms of the last *failed* probe. Used to apply PROBE_BACKOFF_MS so we
+   * don't respawn the detached probe on every invocation while the registry
+   * is unreachable, AND we still re-check before the 24h `checkedAt` window
+   * elapses once the network recovers. Undefined when the most recent probe
+   * succeeded.
+   */
+  readonly failedAt?: number;
   /** Version of the CLI that wrote this cache — invalidates on upgrade. */
   readonly currentAtCheck: string;
 }
@@ -160,6 +168,7 @@ export async function readCache(env: NodeJS.ProcessEnv): Promise<UpdateCache | n
     return {
       latest: parsed.latest,
       checkedAt: parsed.checkedAt,
+      ...(typeof parsed.failedAt === 'number' ? { failedAt: parsed.failedAt } : {}),
       currentAtCheck: parsed.currentAtCheck,
     };
   } catch {
@@ -249,10 +258,14 @@ export function shouldSpawnProbe(
 ): boolean {
   if (!cache) return true;
   if (cache.currentAtCheck !== currentVersion) return true; // user upgraded; recheck
-  // A failed probe writes a cache with latest='' — back off PROBE_BACKOFF_MS
-  // instead of the full 24h, but still throttle so we don't respawn every call.
-  const interval = cache.latest === '' ? PROBE_BACKOFF_MS : UPDATE_CHECK_INTERVAL_MS;
-  return now - cache.checkedAt >= interval;
+  // If the most recent probe failed, honor the short backoff regardless of
+  // whether we still have a stale-but-good `latest` cached. Otherwise a
+  // transient outage at the scheduled 24h check would suppress retries for
+  // another full day instead of retrying in PROBE_BACKOFF_MS.
+  if (cache.failedAt !== undefined) {
+    return now - cache.failedAt >= PROBE_BACKOFF_MS;
+  }
+  return now - cache.checkedAt >= UPDATE_CHECK_INTERVAL_MS;
 }
 
 export function spawnProbeIfNeeded(opts: UpdaterOptions, cache: UpdateCache | null): void {
@@ -286,12 +299,15 @@ export async function runProbe(opts: UpdaterOptions): Promise<void> {
   if (latest === null) {
     // Negative-cache the failure so we don't respawn a probe on every
     // invocation while the registry is unreachable. Preserve any
-    // previously-known latest so the banner doesn't disappear during a
-    // transient outage.
+    // previously-known `latest` (so the banner doesn't disappear during a
+    // transient outage) AND the previous `checkedAt` (so the 24h interval
+    // isn't silently reset by a failure). The new `failedAt` field carries
+    // the short-backoff signal independently.
     const existing = await readCache(opts.env);
     await writeCache(opts.env, {
       latest: existing?.latest ?? '',
-      checkedAt: now,
+      checkedAt: existing?.checkedAt ?? 0,
+      failedAt: now,
       currentAtCheck: opts.currentVersion,
     });
     return;
@@ -380,6 +396,13 @@ export interface RunUpdateOptions {
   readonly currentVersion: string;
   readonly argv1?: string;
   readonly check?: boolean;
+  /**
+   * Opt in to running the package-manager install even when we couldn't
+   * verify the registry version is newer. Without this, a probe failure
+   * with no cached `latest` aborts rather than risk a silent downgrade for
+   * users on a local/prerelease build that's ahead of `@latest`.
+   */
+  readonly force?: boolean;
   readonly stdout?: NodeJS.WriteStream;
   readonly stderr?: NodeJS.WriteStream;
   /** Injected for tests — defaults to fetchLatestVersion + child_process.spawn. */
@@ -397,19 +420,25 @@ export async function runUpdate(opts: RunUpdateOptions): Promise<number> {
   const cmd = updateCommandFor(pm);
 
   // If our direct probe to registry.npmjs.org failed (corporate proxy, custom
-  // mirror, IPv6-only, registry outage), still defer to the package manager —
-  // it owns the user's registry/mirror/auth config and will succeed where we
-  // can't. We just lose the "already at latest" / version-diff messaging.
+  // mirror, IPv6-only, registry outage, rate limit), the user's package
+  // manager may still be able to fetch a newer version. But we can't blindly
+  // install @latest: if the user is on a local/prerelease build that's ahead
+  // of the registry's `latest` dist-tag (or a corporate mirror is lagging),
+  // doing so silently DOWNGRADES them. So: print the command, explain, and
+  // require --force to actually run it.
   if (latest === null) {
-    if (opts.check) {
-      stderr.write(
-        `contextify: could not reach npm registry directly. Your package manager may still be able to fetch a newer version.\n`,
-      );
-      stdout.write(`Run:  ${cmd.join(' ')}\n`);
-      return 0;
+    stderr.write(
+      `contextify: could not reach npm registry directly. ` +
+        `Cannot confirm whether ${PACKAGE_NAME}@latest is newer than ${opts.currentVersion}.\n`,
+    );
+    stdout.write(`Run manually:  ${cmd.join(' ')}\n`);
+    if (opts.check) return 0;
+    if (!opts.force) {
+      stdout.write(`Or re-run with --force to install @latest anyway.\n`);
+      return 1;
     }
     stdout.write(
-      `Updating contextify via ${pm} (registry probe failed; deferring to the package manager)…\n`,
+      `--force given; deferring to ${pm} (note: this may downgrade if ${PACKAGE_NAME}@latest < ${opts.currentVersion}).\n`,
     );
     stdout.write(`$ ${cmd.join(' ')}\n`);
     return runInstall(opts, cmd, undefined, stdout, stderr);
