@@ -1,0 +1,63 @@
+# Dependabot configuration for contextify-cli.
+#
+# Two ecosystems matter here: npm (devDependencies — the runtime has none)
+# and GitHub Actions (release / CI workflows). Both are batched into weekly
+# PRs so the project doesn't get a constant stream of single-bump noise.
+#
+# Docs: https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
+
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+    commit-message:
+      prefix: chore
+      include: scope
+    groups:
+      # One PR per logical cluster instead of one per package — cuts review
+      # cost dramatically for low-risk dev-dep bumps.
+      typescript-toolchain:
+        patterns:
+          - typescript
+          - '@typescript-eslint/*'
+      linters-and-formatters:
+        patterns:
+          - eslint
+          - eslint-*
+          - prettier
+      testing:
+        patterns:
+          - vitest
+          - '@vitest/*'
+      types:
+        patterns:
+          - '@types/*'
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: '07:00'
+      timezone: Europe/Istanbul
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - github-actions
+    commit-message:
+      prefix: ci
+      include: scope
+    groups:
+      actions:
+        patterns:
+          - '*'
