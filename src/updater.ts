@@ -490,9 +490,18 @@ async function runInstall(
     opts.runCommand ??
     ((c) =>
       new Promise<number>((resolveExit) => {
+        // Windows: npm/pnpm/yarn ship as `.cmd` shim files. child_process.spawn
+        // without `shell: true` cannot launch .cmd scripts by their bare name,
+        // so `contextify update` would otherwise fail with ENOENT on Windows.
+        // `shell: true` is safe here: every argument is either a hardcoded
+        // string (the package name, the manager subcommand) or a version we
+        // already parsed through the strict SemVer regex — no shell-metachar
+        // injection surface.
+        const useShell = process.platform === 'win32';
         const child = spawn(c[0]!, c.slice(1), {
           stdio: 'inherit',
           env: opts.env,
+          shell: useShell,
         });
         child.on('exit', (code) => resolveExit(code ?? 1));
         child.on('error', (err) => {
