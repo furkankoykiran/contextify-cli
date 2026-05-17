@@ -37,7 +37,7 @@ export interface ShipOptions {
   /**
    * Optional explicit credentials. Defaults to resolving via env then
    * `~/.contextify/credentials.json`. When null, the request goes
-   * unauthenticated (server falls back to LEGACY_TENANT_ID in dev).
+   * unauthenticated and the server rejects it with 401.
    * Tests can override this to assert the auth header is present.
    */
   readonly credentials?: ResolvedCredentials | null;

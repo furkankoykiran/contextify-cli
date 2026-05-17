@@ -19,10 +19,15 @@ import { randomUUID } from 'node:crypto';
 import { DEFAULT_SERVER_URL } from '../config.js';
 import { resolveApiKey, type ResolvedCredentials } from '../credentials.js';
 import { resolveIdentity, type ResolvedIdentity } from '../identity.js';
-import { flushSpool, shipBatch, type Batch } from '../shipper.js';
+import { flushSpool, shipBatch, spoolBatch, type Batch } from '../shipper.js';
 import { parseLatestTurn } from '../transcript.js';
 
-export type HookEvent = 'session-start' | 'stop' | 'session-end';
+export type HookEvent =
+  | 'session-start'
+  | 'stop'
+  | 'session-end'
+  | 'user-prompt-submit'
+  | 'post-tool-use';
 
 export interface HookPayload {
   session_id?: string;
@@ -31,9 +36,32 @@ export interface HookPayload {
   hook_event_name?: string;
   source?: string;
   reason?: string;
+  // UserPromptSubmit gives us the prompt text directly.
+  prompt?: string;
+  // PostToolUse gives us the tool name + input + (sometimes) output.
+  tool_name?: string;
+  tool_input?: unknown;
+  tool_response?: unknown;
   // Permissive — Claude Code adds fields over time; we ignore unknown.
   [k: string]: unknown;
 }
+
+/**
+ * Tools whose PostToolUse events we ship. Excludes high-frequency read-only
+ * inspections (Read/Grep/Glob/LS/NotebookRead/TodoWrite) because they bloat
+ * telemetry with no extraction value. Task is included so subagent activity
+ * is at least observable at the parent level.
+ */
+const POST_TOOL_USE_INTERESTING = new Set([
+  'Bash',
+  'Edit',
+  'MultiEdit',
+  'Write',
+  'WebFetch',
+  'Task',
+]);
+
+const MAX_TOOL_SUMMARY_CHARS = 400;
 
 export interface SessionState {
   projectId: string;
@@ -220,6 +248,165 @@ async function runStop(payload: HookPayload, deps: Required<HookDepsResolved>): 
   return 0;
 }
 
+/**
+ * Resolve project context for a hook that may fire before SessionStart has
+ * cached state for this session id. Reads session state first; falls back to
+ * inline identity resolution from cwd.
+ */
+async function resolveProjectContext(
+  payload: HookPayload,
+  deps: Required<HookDepsResolved>,
+): Promise<{
+  projectId: string;
+  projectName: string;
+  serverUrl: string;
+  cwd: string;
+  creds: ResolvedCredentials | null;
+} | null> {
+  const sessionId = payload.session_id;
+  if (sessionId) {
+    const cached = await readSession(deps.stateRoot, sessionId);
+    if (cached) {
+      return {
+        projectId: cached.projectId,
+        projectName: cached.projectName,
+        serverUrl: cached.serverUrl,
+        cwd: cached.cwd,
+        creds: resolveApiKey(deps.env),
+      };
+    }
+  }
+  const cwd = payload.cwd ?? deps.env.PWD ?? process.cwd();
+  let identity: ResolvedIdentity;
+  try {
+    identity = await resolveIdentity({ cwd, env: deps.env });
+  } catch {
+    return null;
+  }
+  const creds = resolveApiKey(deps.env);
+  return {
+    projectId: identity.projectId,
+    projectName: identity.projectName,
+    serverUrl: resolveServerUrl(deps.env, creds),
+    cwd,
+    creds,
+  };
+}
+
+function truncate(text: string, max: number): string {
+  if (text.length <= max) return text;
+  return `${text.slice(0, max - 3)}...`;
+}
+
+function summarizeToolUse(name: string, input: unknown): string {
+  if (!input || typeof input !== 'object') return name;
+  const i = input as Record<string, unknown>;
+  switch (name) {
+    case 'Bash':
+      return typeof i.command === 'string' ? truncate(i.command, MAX_TOOL_SUMMARY_CHARS) : name;
+    case 'Edit':
+    case 'MultiEdit':
+    case 'Write':
+      return typeof i.file_path === 'string' ? truncate(i.file_path, MAX_TOOL_SUMMARY_CHARS) : name;
+    case 'WebFetch':
+      return typeof i.url === 'string' ? truncate(i.url, MAX_TOOL_SUMMARY_CHARS) : name;
+    case 'Task': {
+      const subagent = typeof i.subagent_type === 'string' ? i.subagent_type : 'unknown';
+      const desc = typeof i.description === 'string' ? `: ${truncate(i.description, 200)}` : '';
+      return `${subagent}${desc}`;
+    }
+    default:
+      return name;
+  }
+}
+
+async function runUserPromptSubmit(
+  payload: HookPayload,
+  deps: Required<HookDepsResolved>,
+): Promise<number> {
+  const promptText = typeof payload.prompt === 'string' ? payload.prompt.trim() : '';
+  if (promptText.length === 0) {
+    await appendLog(deps.stateRoot, 'user-prompt-submit: empty prompt — skipping');
+    return 0;
+  }
+  const ctx = await resolveProjectContext(payload, deps);
+  if (!ctx) {
+    await appendLog(deps.stateRoot, 'user-prompt-submit: no project context — skipping');
+    return 0;
+  }
+  const envelope = {
+    source: 'claude-code' as const,
+    kind: 'user_prompt' as const,
+    prompt: {
+      text: promptText,
+      cwd: ctx.cwd,
+      sessionId: payload.session_id ?? null,
+      ts: new Date().toISOString(),
+    },
+  };
+  // High-frequency, blocking-sensitive event: Claude Code waits for this
+  // hook to exit before it processes the prompt. Spool to disk only — no
+  // network — so a slow or unreachable server never adds latency to the
+  // user-visible turn. SessionEnd's flushSpool drains the spool when the
+  // session closes; `contextify ship --once` is the manual escape hatch.
+  await spoolBatch(
+    {
+      projectId: ctx.projectId,
+      projectName: ctx.projectName,
+      sessionId: payload.session_id ?? randomUUID(),
+      payload: JSON.stringify(envelope),
+      source: 'claude-code',
+    },
+    ctx.cwd,
+    'user-prompt-submit',
+  );
+  return 0;
+}
+
+async function runPostToolUse(
+  payload: HookPayload,
+  deps: Required<HookDepsResolved>,
+): Promise<number> {
+  const toolName = typeof payload.tool_name === 'string' ? payload.tool_name : '';
+  if (!POST_TOOL_USE_INTERESTING.has(toolName)) {
+    // Read/Grep/Glob/etc. — silently drop; high volume, low signal.
+    return 0;
+  }
+  const ctx = await resolveProjectContext(payload, deps);
+  if (!ctx) {
+    await appendLog(deps.stateRoot, `post-tool-use: no project context — skipping ${toolName}`);
+    return 0;
+  }
+  const summary = summarizeToolUse(toolName, payload.tool_input);
+  const envelope = {
+    source: 'claude-code' as const,
+    kind: 'tool_use' as const,
+    tool: {
+      name: toolName,
+      summary,
+      cwd: ctx.cwd,
+      sessionId: payload.session_id ?? null,
+      ts: new Date().toISOString(),
+    },
+  };
+  // Same blocking-sensitive contract as user-prompt-submit: Claude Code
+  // waits for this hook between tool calls, so we never hit the network
+  // inline. Spool to disk; the spool flushes on SessionEnd or via
+  // `contextify ship --once`.
+  await spoolBatch(
+    {
+      projectId: ctx.projectId,
+      projectName: ctx.projectName,
+      sessionId: payload.session_id ?? randomUUID(),
+      payload: JSON.stringify(envelope),
+      source: 'claude-code',
+    },
+    ctx.cwd,
+    `post-tool-use:${toolName}`,
+  );
+  return 0;
+}
+
 async function runSessionEnd(
   payload: HookPayload,
   deps: Required<HookDepsResolved>,
@@ -286,6 +473,10 @@ export async function runHook(event: HookEvent, deps: HookDeps = {}): Promise<nu
         return await runStop(payload, resolved);
       case 'session-end':
         return await runSessionEnd(payload, resolved);
+      case 'user-prompt-submit':
+        return await runUserPromptSubmit(payload, resolved);
+      case 'post-tool-use':
+        return await runPostToolUse(payload, resolved);
       default:
         // Unreachable via the CLI dispatcher, but guard anyway.
         await appendLog(resolved.stateRoot, `unknown hook event: ${event as string}`);

@@ -11,7 +11,12 @@ import { existsSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const CONFIG_FILENAME = '.contextify.json';
-export const DEFAULT_SERVER_URL = 'http://localhost:3000';
+// The CLI is published to npm for hosted-product users; the documented
+// install flow assumes `https://contextify.live` is the target unless the
+// operator explicitly overrides it via `--server`, `CONTEXTIFY_SERVER_URL`,
+// or a saved value in `~/.contextify/credentials.json`. Local dev runs
+// override the default through the credentials file or the env var.
+export const DEFAULT_SERVER_URL = 'https://contextify.live';
 
 export interface CliConfig {
   readonly projectId: string;

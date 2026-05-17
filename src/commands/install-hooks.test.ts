@@ -71,14 +71,25 @@ describe('install-hooks — installHooks (filesystem)', () => {
     }
   });
 
-  it('appends three event entries when settings.json is missing', async () => {
+  it('appends one entry per configured event when settings.json is missing', async () => {
     const result = await installHooks({ stateRoot: state, claudeSettingsPath: settingsPath });
-    expect(result.appendedEvents).toEqual(['SessionStart', 'Stop', 'SessionEnd']);
+    expect(result.appendedEvents).toEqual([
+      'SessionStart',
+      'Stop',
+      'SessionEnd',
+      'UserPromptSubmit',
+      'PostToolUse',
+    ]);
     expect(result.alreadyPresentEvents).toEqual([]);
     const written = JSON.parse(readFileSync(settingsPath, 'utf8'));
     expect(written.hooks.SessionStart[0].hooks[0].command).toContain('session-start.sh');
     expect(written.hooks.Stop[0].hooks[0].command).toContain('stop.sh');
     expect(written.hooks.SessionEnd[0].hooks[0].command).toContain('session-end.sh');
+    expect(written.hooks.UserPromptSubmit[0].hooks[0].command).toContain('user-prompt-submit.sh');
+    // PostToolUse carries a matcher so Claude Code only fires it for the
+    // tools we actually ship in hooks.ts.
+    expect(written.hooks.PostToolUse[0].matcher).toBe('Bash|Edit|MultiEdit|Write|WebFetch|Task');
+    expect(written.hooks.PostToolUse[0].hooks[0].command).toContain('post-tool-use.sh');
   });
 
   it('preserves existing hooks (PreToolUse/PostToolUse) untouched', async () => {
@@ -101,10 +112,22 @@ describe('install-hooks — installHooks (filesystem)', () => {
 
   it('is a no-op on the second run (idempotency)', async () => {
     const first = await installHooks({ stateRoot: state, claudeSettingsPath: settingsPath });
-    expect(first.appendedEvents).toHaveLength(3);
+    expect(first.appendedEvents).toEqual([
+      'SessionStart',
+      'Stop',
+      'SessionEnd',
+      'UserPromptSubmit',
+      'PostToolUse',
+    ]);
     const second = await installHooks({ stateRoot: state, claudeSettingsPath: settingsPath });
     expect(second.appendedEvents).toHaveLength(0);
-    expect(second.alreadyPresentEvents).toEqual(['SessionStart', 'Stop', 'SessionEnd']);
+    expect(second.alreadyPresentEvents).toEqual([
+      'SessionStart',
+      'Stop',
+      'SessionEnd',
+      'UserPromptSubmit',
+      'PostToolUse',
+    ]);
   });
 
   it('snapshots an existing settings.json to backups/ before modifying', async () => {

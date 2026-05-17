@@ -125,7 +125,13 @@ describe('contextify install', () => {
       wouldPersistCredentials: { source: string; serverUrl: string | null } | null;
     };
     expect(out.dryRun).toBe(true);
-    expect(out.wouldWriteHooks).toEqual(['SessionStart', 'Stop', 'SessionEnd']);
+    expect(out.wouldWriteHooks).toEqual([
+      'SessionStart',
+      'Stop',
+      'SessionEnd',
+      'UserPromptSubmit',
+      'PostToolUse',
+    ]);
     expect(out.settingsPath).toBe(settingsPath);
     expect(out.wouldPersistCredentials).toBeNull();
     expect(() => readFileSync(settingsPath, 'utf8')).toThrow();

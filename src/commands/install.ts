@@ -9,7 +9,7 @@
  * available, so IDE-spawned hook subprocesses (which do not inherit the
  * operator's shell env) can authenticate against the SaaS via the
  * on-disk ~/.contextify/credentials.json. Without this step, hooks ship
- * unauthenticated and the server routes the data to LEGACY_TENANT_ID.
+ * unauthenticated and the server rejects them with 401.
  *
  * Designed for users who want one-time global wiring: run once anywhere,
  * and every Claude Code session in any directory gets captured. The hook
@@ -28,7 +28,7 @@
  */
 import { saveCredentials } from '../credentials.js';
 import { KEY_RE } from './login.js';
-import { installHooks, type InstallHooksResult } from './install-hooks.js';
+import { HOOK_EVENTS, installHooks, type InstallHooksResult } from './install-hooks.js';
 
 export interface InstallArgs {
   readonly dryRun?: boolean;
@@ -106,7 +106,7 @@ export async function runInstall(args: InstallArgs, opts: InstallOptions = {}): 
       `${JSON.stringify(
         {
           dryRun: true,
-          wouldWriteHooks: ['SessionStart', 'Stop', 'SessionEnd'],
+          wouldWriteHooks: HOOK_EVENTS,
           hooksDir: `${stateRoot}/hooks`,
           settingsPath,
           backupDir: `${stateRoot}/backups`,
@@ -148,7 +148,8 @@ export async function runInstall(args: InstallArgs, opts: InstallOptions = {}): 
     }
   }
 
-  const allPresent = result.appendedEvents.length === 0 && result.alreadyPresentEvents.length === 3;
+  const allPresent =
+    result.appendedEvents.length === 0 && result.alreadyPresentEvents.length === HOOK_EVENTS.length;
 
   stdout.write(`${allPresent ? 'Hooks already installed' : 'Installed Contextify hooks'} (`);
   stdout.write(`appended=${JSON.stringify(result.appendedEvents)}, `);
@@ -163,7 +164,7 @@ export async function runInstall(args: InstallArgs, opts: InstallOptions = {}): 
   } else {
     stdout.write(
       `  credentials:   NOT PERSISTED — hooks will ship unauthenticated and the server\n` +
-        `                 will route data to LEGACY_TENANT_ID. Re-run with --key or set\n` +
+        `                 will reject them with 401. Re-run with --key or set\n` +
         `                 CONTEXTIFY_API_KEY before invoking install.\n`,
     );
   }

@@ -15,13 +15,30 @@ import { chmod, copyFile, mkdir, readFile, rename, writeFile } from 'node:fs/pro
 import { homedir } from 'node:os';
 import { dirname, join } from 'node:path';
 
-export const HOOK_EVENTS = ['SessionStart', 'Stop', 'SessionEnd'] as const;
+export const HOOK_EVENTS = [
+  'SessionStart',
+  'Stop',
+  'SessionEnd',
+  'UserPromptSubmit',
+  'PostToolUse',
+] as const;
 export type ClaudeHookEvent = (typeof HOOK_EVENTS)[number];
 
 const SCRIPT_FILES: Record<ClaudeHookEvent, string> = {
   SessionStart: 'session-start.sh',
   Stop: 'stop.sh',
   SessionEnd: 'session-end.sh',
+  UserPromptSubmit: 'user-prompt-submit.sh',
+  PostToolUse: 'post-tool-use.sh',
+};
+
+/**
+ * Matchers for events that take one. PostToolUse fires for every tool;
+ * scope it to the tools we actually ship in hooks.ts so Claude Code
+ * doesn't spend hook overhead on Read/Grep/Glob/LS.
+ */
+const HOOK_MATCHERS: Partial<Record<ClaudeHookEvent, string>> = {
+  PostToolUse: 'Bash|Edit|MultiEdit|Write|WebFetch|Task',
 };
 
 const SCRIPT_BODIES: Record<ClaudeHookEvent, string> = {
@@ -42,6 +59,19 @@ exec contextify hooks stop
 # Pipes the Claude Code hook stdin into 'contextify hooks session-end'.
 # Silent on success, never blocks.
 exec contextify hooks session-end
+`,
+  UserPromptSubmit: `#!/usr/bin/env bash
+# Contextify hook — UserPromptSubmit.
+# Pipes the Claude Code hook stdin into 'contextify hooks user-prompt-submit'.
+# Silent on success, never blocks.
+exec contextify hooks user-prompt-submit
+`,
+  PostToolUse: `#!/usr/bin/env bash
+# Contextify hook — PostToolUse.
+# Pipes the Claude Code hook stdin into 'contextify hooks post-tool-use'.
+# Silent on success, never blocks. The matcher in settings.json limits
+# which tools fire this; the CLI re-filters defensively.
+exec contextify hooks post-tool-use
 `,
 };
 
@@ -138,12 +168,15 @@ export function appendHookCommand(
   settings: ClaudeSettings,
   event: ClaudeHookEvent,
   command: string,
+  matcher?: string,
 ): boolean {
   const hooks: SettingsHooks = settings.hooks ?? {};
   const existing = hooks[event];
   if (eventHasCommand(existing, command)) return false;
   const groups: HookMatcherGroup[] = Array.isArray(existing) ? [...existing] : [];
-  groups.push({ hooks: [{ type: 'command', command }] });
+  const entry: HookMatcherGroup = { hooks: [{ type: 'command', command }] };
+  if (matcher) entry.matcher = matcher;
+  groups.push(entry);
   hooks[event] = groups;
   settings.hooks = hooks;
   return true;
@@ -182,6 +215,8 @@ export async function installHooks(opts: InstallHooksOptions = {}): Promise<Inst
     SessionStart: opts.scriptBodies?.SessionStart ?? SCRIPT_BODIES.SessionStart,
     Stop: opts.scriptBodies?.Stop ?? SCRIPT_BODIES.Stop,
     SessionEnd: opts.scriptBodies?.SessionEnd ?? SCRIPT_BODIES.SessionEnd,
+    UserPromptSubmit: opts.scriptBodies?.UserPromptSubmit ?? SCRIPT_BODIES.UserPromptSubmit,
+    PostToolUse: opts.scriptBodies?.PostToolUse ?? SCRIPT_BODIES.PostToolUse,
   };
 
   const hooksDir = await materializeScripts(stateRoot, bodies);
@@ -193,7 +228,7 @@ export async function installHooks(opts: InstallHooksOptions = {}): Promise<Inst
 
   for (const event of HOOK_EVENTS) {
     const command = hookCommandFor(stateRoot, event);
-    if (appendHookCommand(settings, event, command)) {
+    if (appendHookCommand(settings, event, command, HOOK_MATCHERS[event])) {
       appended.push(event);
     } else {
       present.push(event);
