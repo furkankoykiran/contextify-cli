@@ -650,15 +650,68 @@ describe('updater — runProbe negative-cache on failure', () => {
     expect(after?.failedAt).toBe(1_700_000_999_000);
   });
 
-  it('runProbe is callable and does not throw on a real fetch failure', async () => {
-    // Sanity smoke: with an unreachable state dir + offline CI test env,
-    // runProbe should resolve without throwing. Either it negative-caches
-    // (CI is online) or it writes an empty-latest cache (offline) — both fine.
+  it('runProbe writes a fresh successful cache on probe success', async () => {
+    // No live-network: inject fetchLatest so tests stay deterministic and
+    // fast even on offline / firewalled CI.
     const env: NodeJS.ProcessEnv = {
       CONTEXTIFY_STATE_DIR: dir,
       CI: '',
       NODE_ENV: 'production',
     };
-    await expect(runProbe({ env, currentVersion: '1.0.0' })).resolves.toBeUndefined();
+    const fixedNow = 1_750_000_000_000;
+    await runProbe({
+      env,
+      currentVersion: '1.0.0',
+      fetchLatest: async () => '1.2.0',
+      now: () => fixedNow,
+    });
+    const cached = await readCache(env);
+    expect(cached?.latest).toBe('1.2.0');
+    expect(cached?.checkedAt).toBe(fixedNow);
+    expect(cached?.failedAt).toBeUndefined();
+  });
+
+  it('runProbe writes failedAt on probe failure, preserves prior latest/checkedAt', async () => {
+    const env: NodeJS.ProcessEnv = {
+      CONTEXTIFY_STATE_DIR: dir,
+      CI: '',
+      NODE_ENV: 'production',
+    };
+    // Seed a successful prior probe.
+    await writeCache(env, {
+      latest: '1.5.0',
+      checkedAt: 1_700_000_000_000,
+      currentAtCheck: '1.0.0',
+    });
+    const fixedNow = 1_700_000_999_000;
+    await runProbe({
+      env,
+      currentVersion: '1.0.0',
+      fetchLatest: async () => null,
+      now: () => fixedNow,
+    });
+    const cached = await readCache(env);
+    expect(cached?.latest).toBe('1.5.0');
+    expect(cached?.checkedAt).toBe(1_700_000_000_000);
+    expect(cached?.failedAt).toBe(fixedNow);
+  });
+
+  it('runProbe writes an empty-latest cache on first-ever failure', async () => {
+    const env: NodeJS.ProcessEnv = {
+      CONTEXTIFY_STATE_DIR: dir,
+      CI: '',
+      NODE_ENV: 'production',
+    };
+    const fixedNow = 1_700_000_000_000;
+    await runProbe({
+      env,
+      currentVersion: '1.0.0',
+      fetchLatest: async () => null,
+      now: () => fixedNow,
+    });
+    const cached = await readCache(env);
+    expect(cached?.latest).toBe('');
+    expect(cached?.checkedAt).toBe(0);
+    expect(cached?.failedAt).toBe(fixedNow);
   });
 });

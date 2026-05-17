@@ -54,6 +54,8 @@ export interface UpdaterOptions {
   readonly env: NodeJS.ProcessEnv;
   readonly currentVersion: string;
   readonly now?: () => number;
+  /** Injected for tests — defaults to fetchLatestVersion against the npm registry. */
+  readonly fetchLatest?: () => Promise<string | null>;
 }
 
 export function stateDirFor(env: NodeJS.ProcessEnv): string {
@@ -294,7 +296,8 @@ export function spawnProbeIfNeeded(opts: UpdaterOptions, cache: UpdateCache | nu
 
 /** Runs inside the detached child: fetch + write cache, then exit. */
 export async function runProbe(opts: UpdaterOptions): Promise<void> {
-  const latest = await fetchLatestVersion();
+  const fetcher = opts.fetchLatest ?? (() => fetchLatestVersion());
+  const latest = await fetcher();
   const now = (opts.now ?? Date.now)();
   if (latest === null) {
     // Negative-cache the failure so we don't respawn a probe on every
