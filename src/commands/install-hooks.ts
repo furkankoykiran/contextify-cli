@@ -41,29 +41,73 @@ const HOOK_MATCHERS: Partial<Record<ClaudeHookEvent, string>> = {
   PostToolUse: 'Bash|Edit|MultiEdit|Write|WebFetch|Task',
 };
 
+/**
+ * Shared prologue every hook script ships with. Claude Code can launch
+ * hooks from contexts that inherit a stripped PATH (systemd-style spawn,
+ * GUI runner, IDE child process) — so a bare `exec contextify` would
+ * silently fail on machines where the CLI is installed via pnpm/npm
+ * global but `~/.local/share/pnpm` (etc.) isn't on the inherited PATH.
+ *
+ * The prologue covers the common install layouts without forcing every
+ * operator to fix their PATH:
+ *
+ *   - `CONTEXTIFY_BIN_DIR`  explicit escape hatch (highest precedence) —
+ *                           set this to the dir holding the `contextify`
+ *                           binary for repo-local dev installs, e.g.
+ *                           `export CONTEXTIFY_BIN_DIR=<repo>/node_modules/.bin`
+ *   - pnpm global           `$PNPM_HOME` (set by `pnpm setup`), else
+ *                           `~/.local/share/pnpm` (its default).
+ *   - npm global            `~/.npm-global/bin` and `~/.npm/bin`.
+ *   - bun / volta / brew    one-line entries for portability.
+ *   - /usr/local/bin        for `pnpm link --global` and apt-style installs.
+ *
+ * Hooks must never block Claude Code. If `contextify` still isn't on PATH
+ * after the augmentation, the script exits 0 — Claude Code keeps going.
+ */
+const RESOLVER_PROLOGUE = `# Make 'node' reachable for the contextify CLI shim. Hooks may be launched
+# from a subprocess with a stripped PATH that lacks nvm/asdf/volta dirs.
+if ! command -v node >/dev/null 2>&1; then
+  if [ -s "\${NVM_DIR:-$HOME/.nvm}/nvm.sh" ]; then
+    # shellcheck disable=SC1091
+    . "\${NVM_DIR:-$HOME/.nvm}/nvm.sh" >/dev/null 2>&1
+    nvm use default >/dev/null 2>&1 || true
+  fi
+  for d in "$HOME"/.nvm/versions/node/*/bin "$HOME"/.volta/bin "$HOME"/.asdf/installs/nodejs/*/bin /usr/local/bin /opt/homebrew/bin; do
+    [ -x "$d/node" ] && PATH="$d:$PATH" && break
+  done
+fi
+# Resolve the contextify CLI across global pnpm/npm/bun installs and the
+# repo-local workspace bin. Override by exporting CONTEXTIFY_BIN_DIR.
+PATH="\${CONTEXTIFY_BIN_DIR:+$CONTEXTIFY_BIN_DIR:}\${PNPM_HOME:-$HOME/.local/share/pnpm}:$HOME/.npm-global/bin:$HOME/.npm/bin:$HOME/.bun/bin:$HOME/.volta/bin:/usr/local/bin:/opt/homebrew/bin:$PATH"
+command -v contextify >/dev/null 2>&1 || exit 0`;
+
 const SCRIPT_BODIES: Record<ClaudeHookEvent, string> = {
   SessionStart: `#!/usr/bin/env bash
 # Contextify hook — SessionStart.
 # Pipes the Claude Code hook stdin into 'contextify hooks session-start'.
 # Silent on success, never blocks.
+${RESOLVER_PROLOGUE}
 exec contextify hooks session-start
 `,
   Stop: `#!/usr/bin/env bash
 # Contextify hook — Stop.
 # Pipes the Claude Code hook stdin into 'contextify hooks stop'.
 # Silent on success, never blocks.
+${RESOLVER_PROLOGUE}
 exec contextify hooks stop
 `,
   SessionEnd: `#!/usr/bin/env bash
 # Contextify hook — SessionEnd.
 # Pipes the Claude Code hook stdin into 'contextify hooks session-end'.
 # Silent on success, never blocks.
+${RESOLVER_PROLOGUE}
 exec contextify hooks session-end
 `,
   UserPromptSubmit: `#!/usr/bin/env bash
 # Contextify hook — UserPromptSubmit.
 # Pipes the Claude Code hook stdin into 'contextify hooks user-prompt-submit'.
 # Silent on success, never blocks.
+${RESOLVER_PROLOGUE}
 exec contextify hooks user-prompt-submit
 `,
   PostToolUse: `#!/usr/bin/env bash
@@ -71,6 +115,7 @@ exec contextify hooks user-prompt-submit
 # Pipes the Claude Code hook stdin into 'contextify hooks post-tool-use'.
 # Silent on success, never blocks. The matcher in settings.json limits
 # which tools fire this; the CLI re-filters defensively.
+${RESOLVER_PROLOGUE}
 exec contextify hooks post-tool-use
 `,
 };

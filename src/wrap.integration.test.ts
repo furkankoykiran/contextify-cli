@@ -5,7 +5,7 @@
  *
  *   child stdout -> Batcher -> shipBatch (network fail) -> .contextify/spool
  *
- * No DATABASE_URL required.
+ * No Postgres connection required.
  */
 import { mkdtempSync, rmSync } from 'node:fs';
 import { readdir, readFile, writeFile } from 'node:fs/promises';

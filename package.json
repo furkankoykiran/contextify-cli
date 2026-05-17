@@ -1,6 +1,6 @@
 {
   "name": "@furkankoykiran/contextify-cli",
-  "version": "0.4.2",
+  "version": "0.4.3",
   "description": "Contextify telemetry CLI — shadows terminal sessions, ships logs to the webhook",
   "keywords": [
     "claude-code",
