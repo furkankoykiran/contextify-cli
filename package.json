@@ -89,7 +89,7 @@
     "prepublishOnly": "pnpm run clean && pnpm run build"
   },
   "devDependencies": {
-    "@types/node": "20.14.10",
+    "@types/node": "25.8.0",
     "@typescript-eslint/eslint-plugin": "8.18.2",
     "@typescript-eslint/parser": "8.18.2",
     "eslint": "8.57.1",
