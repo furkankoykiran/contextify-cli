@@ -60,6 +60,12 @@ export async function compilePrompt(
 
   let res: Response;
   try {
+    // The CLI intentionally sends its locally-stored Contextify project config
+    // (from .contextify.json) and API credential (from ~/.contextify/credentials.json)
+    // to the configured Contextify server. That is the entire purpose of this
+    // binary; there is no untrusted intermediary. The URL is constructed from
+    // the operator-controlled `serverUrl` in resolveConfig.
+    // lgtm[js/file-access-to-http]
     res = await fetchImpl(url, { method: 'POST', headers, body: JSON.stringify(body) });
   } catch (err) {
     return { ok: false, status: null, statusText: (err as Error).message, body: '' };
