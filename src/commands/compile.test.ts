@@ -118,9 +118,7 @@ describe('contextify compile', () => {
     );
     expect(exit).toBe(0);
     expect(clipboardWrite).toHaveBeenCalledWith(SAMPLE.xml);
-    expect(stderr.collected()).toContain(
-      'Paste it as the next Claude Code message',
-    );
+    expect(stderr.collected()).toContain('Paste it as the next Claude Code message');
   });
 
   it('clipboard failure falls back to stdout with exit 1', async () => {

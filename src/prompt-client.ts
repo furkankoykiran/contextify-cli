@@ -72,6 +72,11 @@ export async function compilePrompt(
     const data = (await res.json()) as PromptApiResponse;
     return { ok: true, data };
   } catch (err) {
-    return { ok: false, status: res.status, statusText: `invalid JSON: ${(err as Error).message}`, body: '' };
+    return {
+      ok: false,
+      status: res.status,
+      statusText: `invalid JSON: ${(err as Error).message}`,
+      body: '',
+    };
   }
 }
