@@ -10,6 +10,7 @@
  *   contextify --version
  *   contextify --help
  */
+import { runCompile, type CompileMode } from './commands/compile.js';
 import { runHook, type HookEvent } from './commands/hooks.js';
 import { runInit } from './commands/init.js';
 import { runInstall } from './commands/install.js';
@@ -61,9 +62,15 @@ Usage:
   contextify ship --once
       Flush any locally-spooled batches (left over from offline runs).
 
+  contextify compile <intent|-> [--raw|--paste|--claude] [--top-k N]
+      Compile a Claude-Code-ready XML prompt from an intent draft. Default
+      is --raw (XML to stdout, pipe-friendly). --paste copies to the system
+      clipboard. --claude copies to clipboard and prints a stderr tip for
+      Claude Code paste. Pass '-' to read the intent from stdin.
+
   contextify prompt <draft|-> [--top-k N] [--show-memories] [--json]
-      Build an XML prompt for Claude Code, augmented with project memories
-      and GStack directives. Pass '-' to read the draft from stdin.
+      DEPRECATED — use 'contextify compile' instead. Will be removed in a
+      future minor. Same server engine as 'compile'; only the flags differ.
 
   contextify hooks <session-start|stop|session-end|user-prompt-submit|post-tool-use>
       Internal: invoked by Claude Code hook scripts. Reads the hook
@@ -149,7 +156,12 @@ async function dispatch(
       return runWrap({ argv: extractWrapArgv(argv), cwd: ctx.cwd, env: ctx.env });
     case 'ship':
       return runShip({ cwd: ctx.cwd, env: ctx.env });
+    case 'compile':
+      return runCompile(parseCompileArgs(argv), { cwd: ctx.cwd, env: ctx.env });
     case 'prompt':
+      process.stderr.write(
+        "contextify: 'prompt' is deprecated; use 'contextify compile' instead.\n",
+      );
       return runPrompt(parsePromptArgs(argv), { cwd: ctx.cwd, env: ctx.env });
     case 'update':
       return runUpdateCommand(parseUpdateArgs(argv), {
@@ -272,6 +284,35 @@ function parseLoginArgs(argv: readonly string[]): {
     }
   }
   return { apiKey, serverUrl, name };
+}
+
+function parseCompileArgs(argv: readonly string[]): {
+  intent: string | null;
+  modes: readonly CompileMode[];
+  topK?: number;
+} {
+  let intent: string | null = null;
+  let topK: number | undefined;
+  const modes: CompileMode[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const arg = argv[i]!;
+    if (arg === '--top-k') {
+      const next = argv[++i];
+      const parsed = next !== undefined ? Number.parseInt(next, 10) : NaN;
+      topK = Number.isFinite(parsed) ? parsed : Number.NaN;
+    } else if (arg === '--raw') {
+      modes.push('raw');
+    } else if (arg === '--paste') {
+      modes.push('paste');
+    } else if (arg === '--claude') {
+      modes.push('claude');
+    } else if (arg === '-' && intent === null) {
+      // '-' is equivalent to omitting the positional; runCompile reads stdin.
+    } else if (!arg.startsWith('-') && intent === null) {
+      intent = arg;
+    }
+  }
+  return { intent, modes, topK };
 }
 
 function parsePromptArgs(argv: readonly string[]): {
